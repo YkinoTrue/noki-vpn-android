@@ -11,6 +11,7 @@ class VpnStartCoordinator internal constructor(
         repository: VpnSessionStore,
         backendApi: VpnSessionApi = BackendApiClient(),
         startupTcpPrecheckTimeoutMs: Int,
+        onDiagnostic: (String) -> Unit = {},
     ) : this(
         sessionPreparer = VpnSessionPreparer { token, settings, knownDevices, sessionSelection ->
             VpnSessionCoordinator(
@@ -18,6 +19,7 @@ class VpnStartCoordinator internal constructor(
                 repository = repository,
                 backendApi = backendApi,
                 startupTcpPrecheckTimeoutMs = startupTcpPrecheckTimeoutMs,
+                onDiagnostic = onDiagnostic,
             ).prepare(
                 token = token,
                 settings = settings,

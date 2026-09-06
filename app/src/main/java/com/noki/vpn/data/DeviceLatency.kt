@@ -5,6 +5,9 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
@@ -20,13 +23,27 @@ object DeviceLatency {
     internal const val MAX_CONCURRENT_DNS_LOOKUPS = 4
 
     fun measureTcpConnectMs(rawHost: String, port: Int, timeoutMs: Int = 1800): Int? {
-        val host = normalizeHost(rawHost) ?: return null
+        return measureTcpConnectMs(rawHost, port, timeoutMs) {}
+    }
+
+    internal fun measureTcpConnectMs(
+        rawHost: String,
+        port: Int,
+        timeoutMs: Int,
+        onDiagnostic: (String) -> Unit,
+    ): Int? {
+        val started = System.nanoTime()
+        fun report(result: String) = onDiagnostic(
+            "result=$result; elapsed_ms=${(System.nanoTime() - started) / 1_000_000L}",
+        )
+        val host = normalizeHost(rawHost) ?: run { report("invalid_host"); return null }
         val safePort = port.coerceIn(1, 65535)
         val safeTimeout = timeoutMs.coerceIn(250, 5000)
-        val started = System.nanoTime()
-        val address = resolveAddress(host, safeTimeout) ?: return null
+        var dnsFailure = "dns_no_address"
+        val address = resolveAddress(host, safeTimeout, onFailure = { dnsFailure = it })
+            ?: run { report(dnsFailure); return null }
         val resolutionMs = (System.nanoTime() - started) / 1_000_000L
-        if (resolutionMs >= safeTimeout) return null
+        if (resolutionMs >= safeTimeout) { report("dns_timeout"); return null }
         return try {
             Socket().use { socket ->
                 socket.connect(
@@ -34,14 +51,26 @@ object DeviceLatency {
                     (safeTimeout - resolutionMs).toInt().coerceAtLeast(1),
                 )
             }
-            ((System.nanoTime() - started) / 1_000_000L).toInt().coerceAtLeast(1)
-        } catch (_: IOException) {
+            ((System.nanoTime() - started) / 1_000_000L).toInt().coerceAtLeast(1).also { report("connected") }
+        } catch (error: IOException) {
+            report(tcpFailureReason(error))
             null
         } catch (_: SecurityException) {
+            report("permission_denied")
             null
         } catch (_: IllegalArgumentException) {
+            report("invalid_address")
             null
         }
+    }
+
+    internal fun tcpFailureReason(error: IOException): String = when (error) {
+        is SocketTimeoutException -> "tcp_timeout"
+        is NoRouteToHostException -> "no_route"
+        is ConnectException -> if (error.message.orEmpty().contains("refused", ignoreCase = true)) {
+            "connection_refused"
+        } else "connect_error"
+        else -> "socket_error"
     }
 
     fun measureIcmpPingMs(rawHost: String, count: Int = 3, timeoutSeconds: Int = 2): Int? {
@@ -73,6 +102,7 @@ object DeviceLatency {
     internal fun resolveAddress(
         host: String,
         timeoutMs: Int,
+        onFailure: (String) -> Unit = {},
         lookup: (String) -> Array<InetAddress> = InetAddress::getAllByName,
     ): InetAddress? {
         val safeTimeoutMs = timeoutMs.coerceIn(1, 5_000)
@@ -81,9 +111,10 @@ object DeviceLatency {
             dnsLookupSlots.tryAcquire(safeTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
+            onFailure("dns_interrupted")
             return null
         }
-        if (!slotAcquired) return null
+        if (!slotAcquired) { onFailure("dns_queue_timeout"); return null }
 
         val lookupTask = DnsLookupTask(
             lookup = { lookup(host) },
@@ -93,22 +124,27 @@ object DeviceLatency {
             dnsExecutor.execute(lookupTask)
         } catch (_: RejectedExecutionException) {
             lookupTask.releaseSlotOnce()
+            onFailure("dns_executor_rejected")
             return null
         } catch (_: SecurityException) {
             lookupTask.releaseSlotOnce()
+            onFailure("dns_permission_denied")
             return null
         }
         return try {
             val remainingNanos = deadlineNanos - System.nanoTime()
-            if (remainingNanos <= 0L) return null
+            if (remainingNanos <= 0L) { onFailure("dns_timeout"); return null }
             val addresses = lookupTask.get(remainingNanos, TimeUnit.NANOSECONDS)
             addresses.firstOrNull { it is Inet4Address } ?: addresses.firstOrNull()
         } catch (_: TimeoutException) {
+            onFailure("dns_timeout")
             null
         } catch (_: ExecutionException) {
+            onFailure("dns_error")
             null
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
+            onFailure("dns_interrupted")
             null
         } finally {
             val cancelled = lookupTask.cancel(true)

@@ -35,6 +35,7 @@ object EndpointSelector {
         rotationIndex: (String) -> Int,
         startupTcpPrecheck: ((BackendEndpointCandidate) -> Boolean)? = null,
         networkKind: EndpointRankingPolicy.NetworkKind? = null,
+        onDiagnostic: (String) -> Unit = {},
     ): EndpointSelectionResult {
         val selection = selectCandidate(
             context = context,
@@ -44,8 +45,10 @@ object EndpointSelector {
             rotationIndex = rotationIndex,
             startupTcpPrecheck = startupTcpPrecheck,
             networkKind = networkKind,
+            onDiagnostic = onDiagnostic,
         )
         val candidate = selection?.candidate
+        onDiagnostic("stage=selection; selected=${candidate?.code.orEmpty()}; tcp_failed=${selection?.precheckFailedEndpointCodes?.size ?: 0}; legacy=${selection == null}")
         val profile = when {
             candidate != null -> profileFromCandidate(session, candidate)
             selection != null -> VlessProfile()
@@ -81,10 +84,13 @@ object EndpointSelector {
         rotationIndex: (String) -> Int,
         startupTcpPrecheck: ((BackendEndpointCandidate) -> Boolean)?,
         networkKind: EndpointRankingPolicy.NetworkKind?,
+        onDiagnostic: (String) -> Unit,
     ): CandidateSelection? {
-        val candidates = session.endpointCandidates
+        val withHost = session.endpointCandidates
             .filter { it.entryHost.isNotBlank() }
+        val secure = withHost
             .filter(EndpointSecurityPolicy::isAllowedCandidate)
+        val matchingProtocol = secure
             .filter { candidate ->
                 when (settings.protocol) {
                     VpnProtocol.AUTO -> true
@@ -92,11 +98,13 @@ object EndpointSelector {
                     VpnProtocol.REALITY -> candidate.security.equals("reality", ignoreCase = true)
                 }
             }
-            .filter { !it.canaryOnly }
+        val candidates = matchingProtocol.filter { !it.canaryOnly }
+        onDiagnostic("stage=candidates; received=${session.endpointCandidates.size}; with_host=${withHost.size}; security_allowed=${secure.size}; protocol_allowed=${matchingProtocol.size}; eligible=${candidates.size}; protocol=${settings.protocol}; mode=${settings.endpointSelectionMode}")
         if (candidates.isEmpty()) return null
         val network = networkKind ?: currentNetworkKind(context)
         if (settings.endpointSelectionMode == EndpointSelectionMode.MANUAL) {
             val manualCandidates = EndpointGroupPolicy.manualCandidates(candidates, settings)
+            onDiagnostic("stage=manual_group; candidates=${manualCandidates.size}")
             if (startupTcpPrecheck != null) {
                 val preflight = EndpointStartupPreflightPolicy.selectWithTcpPrecheck(
                     candidates = manualCandidates,

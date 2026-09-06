@@ -6,8 +6,10 @@ import java.util.UUID
 object VpnProfileValidator {
     fun isUsable(
         settings: StoredSettings,
-    ): Boolean {
-        return isUsable(
+    ): Boolean = rejectionReason(settings) == null
+
+    fun rejectionReason(settings: StoredSettings): String? {
+        return rejectionReason(
             profile = settings.profile,
             advancedSettings = settings.advancedSettings,
             selectedLocationCode = settings.userProfile.selectedServerCode,
@@ -20,10 +22,17 @@ object VpnProfileValidator {
         advancedSettings: AdvancedSettings,
         selectedLocationCode: String = "",
         endpointOptions: List<VpnEndpointOption> = emptyList(),
-    ): Boolean {
+    ): Boolean = rejectionReason(profile, advancedSettings, selectedLocationCode, endpointOptions) == null
+
+    private fun rejectionReason(
+        profile: VlessProfile,
+        advancedSettings: AdvancedSettings,
+        selectedLocationCode: String,
+        endpointOptions: List<VpnEndpointOption>,
+    ): String? {
         val expectedSecurity = advancedSettings.protocol.name.lowercase(Locale.ROOT)
         val normalizedSecurity = profile.security.lowercase(Locale.ROOT)
-        if (expectedSecurity != "auto" && normalizedSecurity != expectedSecurity) return false
+        if (expectedSecurity != "auto" && normalizedSecurity != expectedSecurity) return "protocol_mismatch"
 
         if (advancedSettings.endpointSelectionMode == EndpointSelectionMode.MANUAL) {
             val manualGroupKey = EndpointGroupPolicy.resolveManualGroupKey(
@@ -34,10 +43,10 @@ object VpnProfileValidator {
             if (manualGroupKey.isNotBlank()) {
                 val profileGroupKey = endpointOptions.firstOrNull { it.code == profile.endpointCode }
                     ?.let(EndpointGroupPolicy::groupKey)
-                if (profileGroupKey != null && profileGroupKey != manualGroupKey) return false
+                if (profileGroupKey != null && profileGroupKey != manualGroupKey) return "manual_group_mismatch"
             } else {
                 val manualCode = advancedSettings.manualEndpointCode.trim()
-                if (manualCode.isNotBlank() && profile.endpointCode != manualCode) return false
+                if (manualCode.isNotBlank() && profile.endpointCode != manualCode) return "manual_endpoint_mismatch"
             }
         }
 
@@ -48,13 +57,12 @@ object VpnProfileValidator {
             endpointOption.locationCode.isNotBlank() &&
             !endpointOption.locationCode.equals(selectedCode, ignoreCase = true)
         ) {
-            return false
+            return "location_mismatch"
         }
 
-        val hasBaseProfile = profile.host.isNotBlank() &&
-            profile.port.isNotBlank() &&
-            runCatching { UUID.fromString(profile.uuid) }.isSuccess
-        if (!hasBaseProfile) return false
-        return EndpointSecurityPolicy.isAllowedProfile(profile)
+        if (profile.host.isBlank()) return "missing_host"
+        if (profile.port.isBlank()) return "missing_port"
+        if (runCatching { UUID.fromString(profile.uuid) }.isFailure) return "invalid_credential"
+        return if (EndpointSecurityPolicy.isAllowedProfile(profile)) null else "security_policy_rejected"
     }
 }

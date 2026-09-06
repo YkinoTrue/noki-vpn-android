@@ -16,6 +16,46 @@ import kotlin.system.measureTimeMillis
 
 class ClientLatencySamplerTest {
     @Test
+    fun tcpDiagnosticsDistinguishSuccessRefusalAndInvalidHost() {
+        val events = mutableListOf<String>()
+        val server = java.net.ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        val port = server.localPort
+        try {
+            assertTrue(DeviceLatency.measureTcpConnectMs("127.0.0.1", port, 800, events::add) != null)
+            assertTrue(events.last().contains("result=connected"))
+        } finally {
+            server.close()
+        }
+        assertNull(DeviceLatency.measureTcpConnectMs("127.0.0.1", port, 800, events::add))
+        assertTrue(events.last().contains("result=connection_refused"))
+        assertNull(DeviceLatency.measureTcpConnectMs("", port, 800, events::add))
+        assertTrue(events.last().contains("result=invalid_host"))
+    }
+
+    @Test
+    fun dnsDiagnosticsDistinguishFailureFromTimeoutWithoutExceptionText() {
+        val events = mutableListOf<String>()
+        assertNull(DeviceLatency.resolveAddress("test.invalid", 100, onFailure = events::add) {
+            throw java.net.UnknownHostException("secret-host-should-not-appear")
+        })
+        assertEquals(listOf("dns_error"), events)
+        events.clear()
+        assertNull(DeviceLatency.resolveAddress("test.invalid", 50, onFailure = events::add) {
+            Thread.sleep(10_000)
+            emptyArray()
+        })
+        assertEquals(listOf("dns_timeout"), events)
+    }
+
+    @Test
+    fun tcpDiagnosticReasonsNeverIncludeRawSocketErrors() {
+        assertEquals("tcp_timeout", DeviceLatency.tcpFailureReason(java.net.SocketTimeoutException("secret")))
+        assertEquals("no_route", DeviceLatency.tcpFailureReason(java.net.NoRouteToHostException("secret")))
+        assertEquals("socket_error", DeviceLatency.tcpFailureReason(java.net.SocketException("secret")))
+        assertEquals("connect_error", DeviceLatency.tcpFailureReason(java.net.ConnectException("secret")))
+    }
+
+    @Test
     fun stalledProbeCannotBlockTheLocationBatch() = runBlocking {
         val sampler = ClientLatencySampler(
             tcpConnect = { _, _, _ ->

@@ -153,6 +153,13 @@ class AppVpnService : VpnService() {
             context = applicationContext,
             repository = connectionRepository,
             startupTcpPrecheckTimeoutMs = STARTUP_TCP_PRECHECK_TIMEOUT_MS,
+            onDiagnostic = { details ->
+                connectionRepository.recordAppLog(
+                    category = "vpn",
+                    message = "profile_prepare_diagnostic",
+                    details = details,
+                )
+            },
         )
         connectionPreparer = VpnConnectionPreparer(
             store = connectionRepository,
