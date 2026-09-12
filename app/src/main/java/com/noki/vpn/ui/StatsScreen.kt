@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -30,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -97,15 +100,11 @@ fun StatsScreen(
             val density = LocalDensity.current
             val panelX = metrics.contentStart
             val panelWidth = metrics.contentWidth
-            val headerTop = 48.dp
-            val titleLineHeight = 28.8.dp
-            val subtitleTop = headerTop + 32.dp
-            val contentTop = headerTop + 68.dp
+            val headerTop = metrics.dp(48f)
+            val subtitleTop = headerTop + metrics.dp(32f)
+            val contentTop = headerTop + metrics.dp(68f)
             val navBarBottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
             val bottomNavTop = maxHeight - navBarBottomInset - metrics.dp(60f) - metrics.dp(20f)
-            val periodSelectorHeight = 60.dp
-            val cardTop = contentTop + periodSelectorHeight + 18.dp
-            val cardHeight = (bottomNavTop - cardTop - 24.dp).coerceAtLeast(280.dp)
 
             if (showBackground) {
                 HomeBackground(liveGlassEnabled = liveGlassEnabled)
@@ -133,7 +132,10 @@ fun StatsScreen(
             Column(
                 modifier = Modifier
                     .offset(x = panelX, y = contentTop)
-                    .width(panelWidth),
+                    .width(panelWidth)
+                    .height((bottomNavTop - contentTop).coerceAtLeast(0.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = metrics.dp(24f)),
             ) {
                 StatsPeriodSelector(
                     selectedPeriod = selectedPeriod,
@@ -141,13 +143,11 @@ fun StatsScreen(
                     liveGlassEnabled = liveGlassEnabled,
                     onPeriodChanged = { selectedPeriod = it },
                 )
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(metrics.dp(18f)))
                 StatsDateCard(
                     state = state,
                     period = selectedPeriod,
-                    modifier = Modifier
-                        .width(panelWidth)
-                        .height(cardHeight),
+                    modifier = Modifier.width(panelWidth),
                 )
             }
         }
@@ -161,6 +161,7 @@ private fun StatsPeriodSelector(
     liveGlassEnabled: Boolean,
     onPeriodChanged: (StatsPeriod) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val periods = listOf(
         StatsPeriod.TODAY,
         StatsPeriod.WEEK,
@@ -168,6 +169,9 @@ private fun StatsPeriodSelector(
         StatsPeriod.YEAR,
     )
     GlassSegmentedControl(
+        labelFontSize = metrics.sp(14f),
+        labelLineHeight = metrics.sp(17f),
+        capsulePadding = metrics.dp(5f),
         labels = listOf(
             tr(language, "Сегодня", "Today"),
             tr(language, "Неделя", "Week"),
@@ -178,10 +182,10 @@ private fun StatsPeriodSelector(
         onSelectedIndexChanged = { index -> onPeriodChanged(periods[index.coerceIn(periods.indices)]) },
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp),
+            .height(metrics.dp(60f)),
         activeBlur = 0.dp,
-        lensRefractionHeight = 24.dp,
-        lensRefractionAmount = 24.dp,
+        lensRefractionHeight = metrics.dp(24f),
+        lensRefractionAmount = metrics.dp(24f),
         depthEffectEnabled = true,
         maxPressedScaleX = 1.1f,
         liveGlassEnabled = liveGlassEnabled,
@@ -194,6 +198,7 @@ private fun StatsDateCard(
     period: StatsPeriod,
     modifier: Modifier = Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val language = state.personalizationSettings.language
     val today = LocalDate.now()
     val aggregate = remember(state.dailyStats, period, today) {
@@ -209,23 +214,23 @@ private fun StatsDateCard(
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(StatsBgLighter, RoundedCornerShape(20.dp))
-            .padding(vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+            .clip(RoundedCornerShape(metrics.dp(20f)))
+            .background(StatsBgLighter, RoundedCornerShape(metrics.dp(20f)))
+            .padding(vertical = metrics.dp(20f)),
+        verticalArrangement = Arrangement.spacedBy(metrics.dp(20f)),
     ) {
         Column(
             modifier = Modifier
-                .width(275.dp)
+                .width(metrics.dp(275f))
                 .align(Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(5f)),
         ) {
             StatsText(
                 text = statsPeriodLabel(period, language),
                 fontSize = 12f,
                 lineHeight = 14.4f,
                 color = StatsTextSecondary,
-                modifier = Modifier.width(180.dp),
+                modifier = Modifier.width(metrics.dp(180f)),
             )
             StatsText(
                 text = trafficLabel,
@@ -233,17 +238,17 @@ private fun StatsDateCard(
                 lineHeight = 33.6f,
                 color = StatsTextPrimary,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.width(180.dp),
+                modifier = Modifier.width(metrics.dp(180f)),
             )
         }
 
         Column(
             modifier = Modifier
-                .width(275.dp)
+                .width(metrics.dp(275f))
                 .align(Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(15.dp),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(15f)),
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(metrics.dp(15f))) {
                 StatsMetricCard(
                     title = tr(language, "Трафик", "Traffic"),
                     value = trafficLabel,
@@ -255,7 +260,7 @@ private fun StatsDateCard(
                     modifier = Modifier.weight(1f),
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(metrics.dp(15f))) {
                 StatsMetricCard(
                     title = tr(language, "Средний пинг", "Average ping"),
                     value = avgPing,
@@ -269,7 +274,6 @@ private fun StatsDateCard(
             }
         }
 
-        Spacer(modifier = Modifier.weight(1f))
         StatsUsageChart(
             bars = weeklyBars,
         )
@@ -282,13 +286,14 @@ private fun StatsMetricCard(
     value: String,
     modifier: Modifier = Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Column(
         modifier = modifier
-            .height(84.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(StatsBgSoft, RoundedCornerShape(16.dp))
-            .border(BorderStroke(1.dp, StatsStroke.copy(alpha = 0.25f)), RoundedCornerShape(16.dp))
-            .padding(horizontal = 16.dp),
+            .height(metrics.dp(84f))
+            .clip(RoundedCornerShape(metrics.dp(16f)))
+            .background(StatsBgSoft, RoundedCornerShape(metrics.dp(16f)))
+            .border(BorderStroke(1.dp, StatsStroke.copy(alpha = 0.25f)), RoundedCornerShape(metrics.dp(16f)))
+            .padding(horizontal = metrics.dp(16f)),
         verticalArrangement = Arrangement.Center,
     ) {
         StatsText(
@@ -313,28 +318,29 @@ private fun StatsMetricCard(
 private fun StatsUsageChart(
     bars: List<StatsChartBar>,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val maxValue = bars.maxOfOrNull { it.bytes }?.coerceAtLeast(1L) ?: 1L
 
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(metrics.dp(10f)),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(
             modifier = Modifier
-                .width(288.dp)
-                .height(67.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                .width(metrics.dp(288f))
+                .height(metrics.dp(67f)),
+            horizontalArrangement = Arrangement.spacedBy(metrics.dp(20f), Alignment.CenterHorizontally),
             verticalAlignment = Alignment.Bottom,
         ) {
             bars.forEach { bar ->
                 val normalized = (bar.bytes.toFloat() / maxValue.toFloat()).coerceIn(0f, 1f)
-                val barHeight = 18.dp + 49.dp * normalized
+                val barHeight = metrics.dp(18f) + metrics.dp(49f) * normalized
                 Box(
                     modifier = Modifier
-                        .width(24.dp)
+                        .width(metrics.dp(24f))
                         .height(barHeight)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(metrics.dp(8f)))
                         .background(
                             if (bar.isToday) {
                                 Brush.horizontalGradient(
@@ -351,9 +357,9 @@ private fun StatsUsageChart(
         }
         Row(
             modifier = Modifier
-                .width(288.dp)
-                .height(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                .width(metrics.dp(288f))
+                .height(metrics.dp(14f)),
+            horizontalArrangement = Arrangement.spacedBy(metrics.dp(20f), Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             bars.forEach { bar ->
@@ -364,7 +370,7 @@ private fun StatsUsageChart(
                     color = StatsTextSecondary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
-                        .width(24.dp),
+                        .width(metrics.dp(24f)),
                     maxLines = 1,
                 )
             }
@@ -383,12 +389,13 @@ private fun StatsText(
     textAlign: TextAlign? = null,
     maxLines: Int = Int.MAX_VALUE,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Text(
         text = text,
         color = color,
         fontFamily = ManropeFontFamily,
-        fontSize = fontSize.sp,
-        lineHeight = lineHeight.sp,
+        fontSize = metrics.sp(fontSize),
+        lineHeight = metrics.sp(lineHeight),
         fontWeight = fontWeight,
         textAlign = textAlign,
         maxLines = maxLines,

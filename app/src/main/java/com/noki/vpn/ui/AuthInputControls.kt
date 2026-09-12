@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
@@ -60,9 +61,10 @@ internal fun AuthInputField(
     enabled: Boolean = true,
     textFontSize: TextUnit = authSp(14f),
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val passwordIconInteractionSource = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(metrics.dp(20f))
     val placeholderFontSize = authSp(14f)
     val line12 = authSp(12f)
     var passwordVisible by remember { mutableStateOf(false) }
@@ -78,7 +80,7 @@ internal fun AuthInputField(
             enabled = enabled,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 19.dp, end = if (isPassword) 61.dp else 19.dp),
+                .padding(start = metrics.dp(19f), end = if (isPassword) metrics.dp(61f) else metrics.dp(19f)),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
@@ -121,8 +123,8 @@ internal fun AuthInputField(
                 tint = NokiTextMuted,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 20.dp)
-                    .size(width = 22.dp, height = 17.dp)
+                    .padding(end = metrics.dp(20f))
+                    .size(width = metrics.dp(22f), height = metrics.dp(17f))
                     .clickable(
                         interactionSource = passwordIconInteractionSource,
                         indication = null,
@@ -139,6 +141,7 @@ internal fun PasswordVisibilityIcon(
     tint: Color,
     modifier: Modifier = Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center,
@@ -155,10 +158,10 @@ internal fun PasswordVisibilityIcon(
             colorFilter = ColorFilter.tint(tint),
             modifier = Modifier
                 .size(
-                    width = 23.5.dp,
-                    height = if (visible) 18.5.dp else 12.5.dp,
+                    width = metrics.dp(23.5f),
+                    height = if (visible) metrics.dp(18.5f) else metrics.dp(12.5f),
                 )
-                .offset(y = if (visible) 0.dp else 2.dp),
+                .offset(y = if (visible) 0.dp else metrics.dp(2f)),
         )
     }
 }

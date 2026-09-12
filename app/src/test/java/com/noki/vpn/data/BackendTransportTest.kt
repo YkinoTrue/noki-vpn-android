@@ -25,6 +25,15 @@ import org.junit.Test
 
 class BackendTransportTest {
     @Test
+    fun `backend control plane and streaming retain default protocols`() {
+        val controlPlane = defaultBackendControlPlaneClient()
+        val streaming = backendStreamingClient(controlPlane)
+
+        assertEquals(OkHttpClient().protocols, controlPlane.protocols)
+        assertEquals(controlPlane.protocols, streaming.protocols)
+    }
+
+    @Test
     fun `control plane and streaming both have finite total deadlines`() {
         val controlPlane = defaultBackendControlPlaneClient()
         val streaming = backendStreamingClient(controlPlane)

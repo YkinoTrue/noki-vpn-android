@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -37,6 +38,7 @@ internal fun AdvancedFilterCard(
     onModeChanged: (AppFilterMode) -> Unit,
     onConfigure: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val panelBackdrop = rememberLayerBackdrop()
     val options = listOf(
         AppFilterMode.ALL_APPS to tr(language, "Все приложения", "All apps"),
@@ -51,12 +53,12 @@ internal fun AdvancedFilterCard(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(15.dp),
+                .fillMaxWidth()
+                .padding(horizontal = metrics.dp(20f), vertical = metrics.dp(20f)),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(15f)),
         ) {
             Column(
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(metrics.dp(2f)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 AdvancedText(
@@ -80,7 +82,7 @@ internal fun AdvancedFilterCard(
                 )
             }
             Column(
-                verticalArrangement = Arrangement.spacedBy(NokiUiKitPolicy.advancedFilterOptionGapDp.dp),
+                verticalArrangement = Arrangement.spacedBy(metrics.dp(NokiUiKitPolicy.advancedFilterOptionGapDp)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 options.forEach { (optionMode, label) ->
@@ -95,9 +97,9 @@ internal fun AdvancedFilterCard(
                 text = tr(language, "Выбор приложений", "Choose apps"),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(NokiUiKitPolicy.advancedFilterConfigureButtonHeightDp.dp),
+                    .height(metrics.dp(NokiUiKitPolicy.settingsInlineActionHeightDp)),
                 fontSize = 13f,
-                cornerRadius = 18.dp,
+                cornerRadius = metrics.dp(18f),
                 backdrop = panelBackdrop,
                 liveGlassEnabled = liveGlassEnabled,
                 glassEnabled = true,
@@ -116,6 +118,7 @@ internal fun AdvancedYoutubeNoAdsRow(
     liveGlassEnabled: Boolean,
     modifier: Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     AdvancedPanelSurface(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
@@ -124,7 +127,7 @@ internal fun AdvancedYoutubeNoAdsRow(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = metrics.dp(20f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -135,14 +138,15 @@ internal fun AdvancedYoutubeNoAdsRow(
                 color = AdvancedTextPrimary,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 12.dp),
+                    .padding(end = metrics.dp(12f)),
             )
             NokiLiquidToggle(
+                sizeFactor = metrics.contentScale,
                 selected = enabled,
                 onSelectedChange = onEnabledChanged,
                 backdrop = backdrop,
                 liveGlassEnabled = liveGlassEnabled,
-                modifier = Modifier.padding(start = 14.dp),
+                modifier = Modifier.padding(start = metrics.dp(14f)),
             )
         }
     }
@@ -154,11 +158,12 @@ internal fun AdvancedFilterModeOption(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(NokiUiKitPolicy.advancedFilterOptionRadiusDp.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(NokiUiKitPolicy.advancedFilterOptionRadiusDp))
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(NokiUiKitPolicy.advancedFilterOptionHeightDp.dp)
+            .height(metrics.dp(NokiUiKitPolicy.advancedFilterOptionHeightDp))
             .clip(shape)
             .background(AdvancedBgLighter.copy(alpha = 0.75f), shape)
             .border(BorderStroke(1.dp, AdvancedStroke.copy(alpha = 0.45f)), shape)
@@ -167,7 +172,7 @@ internal fun AdvancedFilterModeOption(
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onClick,
             )
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = metrics.dp(20f)),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -185,11 +190,12 @@ internal fun AdvancedFilterModeOption(
 
 @Composable
 internal fun AdvancedRadioIndicator(selected: Boolean) {
-    val shape = RoundedCornerShape(40.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(40f))
     Box(
         modifier = Modifier
-            .width(24.dp)
-            .height(24.dp)
+            .width(metrics.dp(24f))
+            .height(metrics.dp(24f))
             .clip(shape)
             .background(AdvancedBgSoft.copy(alpha = 0.44f), shape)
             .border(
@@ -204,8 +210,8 @@ internal fun AdvancedRadioIndicator(selected: Boolean) {
         if (selected) {
             Box(
                 modifier = Modifier
-                    .width(14.dp)
-                    .height(14.dp)
+                    .width(metrics.dp(14f))
+                    .height(metrics.dp(14f))
                     .clip(shape)
                     .background(AdvancedAccentPrimary, shape),
             )
@@ -224,6 +230,7 @@ internal fun AdvancedDomainRuleWideCard(
     modifier: Modifier,
     onConfigure: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val panelBackdrop = rememberLayerBackdrop()
     AdvancedPanelSurface(
         backdrop = backdrop,
@@ -234,7 +241,7 @@ internal fun AdvancedDomainRuleWideCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = metrics.dp(20f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -242,7 +249,7 @@ internal fun AdvancedDomainRuleWideCard(
                 verticalArrangement = Arrangement.spacedBy(0.dp),
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 12.dp),
+                    .padding(end = metrics.dp(12f)),
             ) {
                 AdvancedText(
                     text = title,
@@ -254,7 +261,7 @@ internal fun AdvancedDomainRuleWideCard(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(metrics.dp(4f)),
                     verticalAlignment = Alignment.Bottom,
                 ) {
                     AdvancedText(
@@ -278,8 +285,8 @@ internal fun AdvancedDomainRuleWideCard(
             AdvancedSmallButton(
                 text = tr(language, "Настроить", "Set up"),
                 modifier = Modifier
-                    .width(90.dp)
-                    .height(36.dp),
+                    .width(metrics.dp(90f))
+                    .height(metrics.dp(36f)),
                 backdrop = panelBackdrop,
                 liveGlassEnabled = liveGlassEnabled,
                 glassEnabled = true,

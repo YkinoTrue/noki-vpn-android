@@ -1,9 +1,34 @@
 package com.noki.vpn.vpn
 
+import com.noki.vpn.data.AppLanguage
+import com.noki.vpn.data.DefaultStoredSettingsFactory
+import com.noki.vpn.data.ServerSelectionMode
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class VpnNotificationControllerTest {
+    @Test
+    fun `notification keeps the connected server name in every selection mode`() {
+        val defaults = DefaultStoredSettingsFactory.create()
+        ServerSelectionMode.entries.forEach { mode ->
+            val settings = defaults.copy(
+                profile = defaults.profile.copy(remark = "Noki Latvia 4"),
+                userProfile = defaults.userProfile.copy(
+                    serverSelectionMode = mode,
+                    actualCountryCode = "LV",
+                    selectedServerCode = "lv",
+                ),
+            )
+            assertEquals("Latvia 4", VpnServiceLogContext.serverLabel(settings))
+            assertEquals("France1", VpnServiceLogContext.serverLabel(
+                settings.copy(profile = settings.profile.copy(remark = "Noki France1")),
+            ))
+        }
+        assertEquals("Латвия", VpnServiceLogContext.serverLabel("lv", "Noki VPN", AppLanguage.RU))
+        assertEquals("Germany", VpnServiceLogContext.serverLabel("de", "", AppLanguage.EN))
+        assertEquals("Riga Noki 2", VpnServiceLogContext.serverLabel("lv", "Noki Riga Noki 2", AppLanguage.RU))
+    }
+
     @Test
     fun `foreground notification contract keeps low-noise channel and disconnect restart actions`() {
         assertEquals("noki_vpn_channel", VpnNotificationContract.CHANNEL_ID)

@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
@@ -93,22 +92,22 @@ fun SupportScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 21.dp)
-                    .padding(top = 58.dp, bottom = 150.dp),
+                    .padding(horizontal = metrics.contentStart)
+                    .padding(top = metrics.dp(58f), bottom = metrics.dp(150f)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 SupportText(
                     text = tr(language, "Поддержка", "Support"),
-                    fontSize = 24f,
-                    lineHeight = 28.8f,
+                    fontSize = 24f * metrics.contentScale,
+                    lineHeight = 28.8f * metrics.contentScale,
                     letterSpacing = 0f,
                     fontWeight = FontWeight.Normal,
                     color = SupportTextPrimary,
                     textAlign = TextAlign.Start,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .width(metrics.contentWidth)
                         .fillMaxWidth()
-                        .padding(start = 18.dp, end = 18.dp),
+                        .padding(horizontal = metrics.dp(18f)),
                 )
 
                 Box(
@@ -121,8 +120,7 @@ fun SupportScreen(
                         language = language,
                         metrics = metrics,
                         modifier = Modifier
-                            .width(metrics.contentWidth)
-                            .widthIn(max = 372.dp),
+                            .width(metrics.contentWidth),
                     )
                 }
             }

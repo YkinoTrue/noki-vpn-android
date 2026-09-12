@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,9 +36,39 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import com.noki.vpn.data.AppLanguage
 import com.noki.vpn.data.ServerLocation
+import com.noki.vpn.data.ServerSelectionMode
+import com.noki.vpn.data.UserProfile
 import com.noki.vpn.R
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import kotlin.math.max
+
+internal fun homeSelectedLocation(
+    locations: List<ServerLocation>,
+    profile: UserProfile,
+): ServerLocation? {
+    fun byCode(code: String?): ServerLocation? {
+        if (code.isNullOrBlank()) return null
+        return locations.firstOrNull { location ->
+            location.code.equals(code, ignoreCase = true) ||
+                location.countryCode.equals(code, ignoreCase = true)
+        }
+    }
+
+    return when (profile.serverSelectionMode) {
+        ServerSelectionMode.SERVER ->
+            locations.firstOrNull { location ->
+                location.servers.any { server -> server.id == profile.selectedNodeId }
+            } ?: byCode(profile.selectedServerCode)
+                ?: byCode(profile.selectedCountryCode)
+        ServerSelectionMode.AUTO ->
+            byCode(profile.selectedServerCode)
+                ?: byCode(profile.actualCountryCode)
+                ?: byCode(profile.selectedCountryCode)
+        ServerSelectionMode.COUNTRY ->
+            byCode(profile.selectedCountryCode)
+                ?: byCode(profile.selectedServerCode)
+    }
+}
 
 @Composable
 internal fun HomeBackground(
@@ -141,9 +172,10 @@ internal fun HomeLocationCard(
     liveGlassEnabled: Boolean,
     onToggle: () -> Unit,
     country: String,
+    subtitle: String? = null,
 ) {
     val headerHeight = designDp(NokiUiKitPolicy.homeLocationHeightDp, scale)
-    val selectedLocation = locations.firstOrNull { it.code == selectedServerCode } ?: locations.firstOrNull()
+    val selectedLocation = locations.firstOrNull { it.code.equals(selectedServerCode, true) }
     val arrowRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
@@ -178,7 +210,8 @@ internal fun HomeLocationCard(
                         .background(HomeStroke.copy(alpha = 0.28f)),
                 )
             }
-            Text(
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
                 text = country,
                 color = HomeTextPrimary,
                 fontFamily = ManropeFontFamily,
@@ -189,8 +222,18 @@ internal fun HomeLocationCard(
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis,
                 style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = true)),
-                modifier = Modifier.weight(1f),
-            )
+              )
+              if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    color = HomeTextSecondary,
+                    fontFamily = ManropeFontFamily,
+                    fontSize = designSp(13f, scale),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+              }
+            }
             HomeDropdownArrowButton(
                 modifier = Modifier
                     .size(designDp(50f, scale)),

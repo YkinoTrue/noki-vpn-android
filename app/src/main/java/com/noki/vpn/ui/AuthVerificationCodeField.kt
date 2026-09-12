@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -44,10 +45,11 @@ internal fun AuthVerificationCodeField(
     backdrop: LayerBackdrop? = null,
     liveGlassEnabled: Boolean = false,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val buttonInteractionSource = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(20.dp)
-    val buttonShape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(metrics.dp(20f))
+    val buttonShape = RoundedCornerShape(metrics.dp(14f))
     val buttonClickAnimator = rememberAuthButtonClickAnimator()
     val font14 = authSp(14f)
     val font18 = authSp(18f)
@@ -65,7 +67,7 @@ internal fun AuthVerificationCodeField(
             enabled = inputEnabled,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 19.dp, end = if (showButton) 130.dp else 19.dp),
+                .padding(start = metrics.dp(19f), end = if (showButton) metrics.dp(130f) else metrics.dp(19f)),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             interactionSource = interactionSource,
@@ -106,8 +108,8 @@ internal fun AuthVerificationCodeField(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 6.dp, end = 6.dp, bottom = 6.dp)
-                    .width(105.dp)
+                    .padding(top = metrics.dp(6f), end = metrics.dp(6f), bottom = metrics.dp(6f))
+                    .width(metrics.dp(105f))
                     .fillMaxHeight()
                     .nokiGlassSurface(
                         shape = buttonShape,
@@ -134,21 +136,22 @@ internal fun AuthVerificationCodeField(
             ) {
                 if (buttonLoading) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(metrics.dp(16f)),
+                        strokeWidth = metrics.dp(2f),
                         color = NokiTextPrimary,
                     )
                 } else {
                     Text(
                         text = buttonText,
+                        modifier = Modifier.padding(horizontal = metrics.dp(4f)),
                         color = if (buttonEnabled) NokiTextPrimary else NokiTextMuted,
                         fontSize = buttonFontSize,
                         lineHeight = line12,
                         fontFamily = ManropeFontFamily,
                         fontWeight = FontWeight.Normal,
                         letterSpacing = authSp(0.14f),
-                        maxLines = 1,
-                        softWrap = false,
+                        maxLines = 2,
+                        softWrap = true,
                         overflow = TextOverflow.Clip,
                         textAlign = TextAlign.Center,
                         style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),

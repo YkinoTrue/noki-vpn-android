@@ -66,7 +66,7 @@ internal fun SettingsProfileCardAdaptive(
 ) {
     val shape = RoundedCornerShape(settingsDp(20f, scale))
     val planBadgeBackdrop = rememberLayerBackdrop()
-    val profileGradientColor = Color(preparedState.profileGradientColorArgb)
+    val profileGradientColor = SettingsTextMuted
 
     Box(modifier = modifier) {
         Box(

@@ -16,6 +16,25 @@ import kotlin.system.measureTimeMillis
 
 class ClientLatencySamplerTest {
     @Test
+    fun countryPingUsesMinimumNodeMedianAndNeverTcpProbesUdpOnlyServer() = runBlocking {
+        val probes = mutableListOf<Int>()
+        val nodes = listOf(
+            VpnServer("one", "One", "DE", "de1", "one.example", 8443, true),
+            VpnServer("two", "Two", "DE", "de2", "two.example", 9443, true),
+            VpnServer("udp", "UDP", "DE", "de2", "udp.example", null, true),
+        )
+        val country = location().copy(servers = nodes)
+        val sampler = ClientLatencySampler(
+            tcpConnect = { _, port, _ -> synchronized(probes) { probes += port }; if (port == 8443) 45 else 20 },
+            icmpPing = { _, _, _ -> error("ICMP fallback not expected") },
+        )
+        val measured = country.withClientLatencies(sampler.measure(listOf(country)))
+        assertEquals(20, measured.latencyMs)
+        assertNull(measured.servers.last().latencyMs)
+        assertEquals(setOf(8443, 9443), probes.toSet())
+        assertNull(measured.withClientLatencies(emptyMap()).latencyMs)
+    }
+    @Test
     fun tcpDiagnosticsDistinguishSuccessRefusalAndInvalidHost() {
         val events = mutableListOf<String>()
         val server = java.net.ServerSocket(0, 1, InetAddress.getLoopbackAddress())

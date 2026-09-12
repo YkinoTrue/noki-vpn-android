@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
@@ -41,19 +42,20 @@ internal fun welcomeInlineMessageForDisplay(
 internal fun AuthLogo(
     top: Dp,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .offset(y = top)
-            .height(78.dp),
+            .height(metrics.dp(78f)),
         contentAlignment = Alignment.TopCenter,
     ) {
         Image(
             painter = painterResource(R.drawable.login_logo_mark_vector),
             contentDescription = null,
             modifier = Modifier
-                .width(68.4.dp)
-                .height(78.dp),
+                .width(metrics.dp(68.4f))
+                .height(metrics.dp(78f)),
             contentScale = ContentScale.Fit,
         )
     }

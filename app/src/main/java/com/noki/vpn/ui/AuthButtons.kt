@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -39,7 +40,7 @@ internal fun AuthSecondaryButton(
     contentColor: Color = NokiTextPrimary,
     borderColor: Color? = null,
     cornerRadius: Dp = 16.dp,
-    textFontSize: TextUnit = TextUnit.Unspecified,
+    textFontSize: TextUnit = authSp(14f),
     backdrop: LayerBackdrop? = null,
     liveGlassEnabled: Boolean = false,
     onClick: () -> Unit,
@@ -96,7 +97,7 @@ internal fun AuthPrimaryButton(
     contentColor: Color = NokiBgBase,
     disabledContentColor: Color = NokiTextSecondary,
     borderColor: Color? = null,
-    textFontSize: TextUnit? = 16.sp,
+    textFontSize: TextUnit? = authSp(16f),
     textFontWeight: FontWeight = FontWeight.Medium,
     useCommonButtonTextStyle: Boolean = true,
     cornerRadius: Dp = 20.dp,
@@ -104,6 +105,7 @@ internal fun AuthPrimaryButton(
     liveGlassEnabled: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val buttonTextSize = textFontSize ?: authSp(20f)
     val buttonLineHeight = textFontSize ?: authSp(20f)
     val backgroundColor = if (enabled) containerColor else disabledContainerColor
@@ -140,8 +142,8 @@ internal fun AuthPrimaryButton(
     ) {
         if (loading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
-                strokeWidth = 2.dp,
+                modifier = Modifier.size(metrics.dp(22f)),
+                strokeWidth = metrics.dp(2f),
                 color = textColor,
             )
         } else {
@@ -244,5 +246,6 @@ internal fun authButtonSurfaceColor(color: Color): Color {
 
 @Composable
 internal fun authSp(value: Float): TextUnit {
-    return with(LocalDensity.current) { value.dp.toSp() }
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    return with(LocalDensity.current) { metrics.dp(value).toSp() }
 }

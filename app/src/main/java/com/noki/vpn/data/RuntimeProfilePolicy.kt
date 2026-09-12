@@ -1,6 +1,8 @@
 package com.noki.vpn.data
 
 object RuntimeProfilePolicy {
+    fun profileAfterServerSelection(profile: VlessProfile): VlessProfile = profile.withoutRuntimeCredentials()
+
     fun normalize(settings: StoredSettings): StoredSettings {
         return settings.copy(
             profile = profileAfterProtocolChange(

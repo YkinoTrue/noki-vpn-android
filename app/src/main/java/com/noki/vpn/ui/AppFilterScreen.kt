@@ -93,12 +93,12 @@ fun AppFilterScreen(
         ) {
             val metrics = nokiAdaptiveMetrics(maxWidth)
             val density = LocalDensity.current
-            val contentTop = 58.dp
+            val contentTop = metrics.dp(58f)
             val navBarBottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
             val bottomNavTop = maxHeight - navBarBottomInset - metrics.dp(60f) - metrics.dp(20f)
             val contentHeight = (
-                bottomNavTop - contentTop - NokiUiKitPolicy.appFilterApplyBottomClearanceDp.dp
-                    + NokiUiKitPolicy.appFilterContentBottomExtensionDp.dp
+                bottomNavTop - contentTop - metrics.dp(NokiUiKitPolicy.appFilterApplyBottomClearanceDp)
+                    + metrics.dp(NokiUiKitPolicy.appFilterContentBottomExtensionDp)
             ).coerceAtLeast(0.dp)
             val visibleApps = remember(state.installedApps, query, hideSystemApps) {
                 AppFilterPolicy.visibleApps(
@@ -125,7 +125,7 @@ fun AppFilterScreen(
                         .offset(x = metrics.contentStart, y = contentTop)
                         .width(metrics.contentWidth)
                         .height(contentHeight),
-                    verticalArrangement = Arrangement.spacedBy(17.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(17f)),
                 ) {
                     AppSearchField(
                         value = query,
@@ -154,7 +154,7 @@ fun AppFilterScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clipToBounds(),
-                                verticalArrangement = Arrangement.spacedBy(9.dp),
+                                verticalArrangement = Arrangement.spacedBy(metrics.dp(9f)),
                             ) {
                                 items(
                                     items = visibleApps,
@@ -182,7 +182,7 @@ fun AppFilterScreen(
                     Box(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(metrics.dp(10f)),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             AppFilterApplyButton(
@@ -191,7 +191,7 @@ fun AppFilterScreen(
                                 liveGlassEnabled = liveGlassEnabled,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(60.dp),
+                                    .height(metrics.dp(60f)),
                                 onClick = {
                                     viewModel.applyAppRoutingSettings()
                                     applyNoticeVersion += 1
@@ -201,7 +201,7 @@ fun AppFilterScreen(
                                 description = tr(language, "Сбросить выбор", "Clear selection"),
                                 backdrop = backdrop,
                                 liveGlassEnabled = liveGlassEnabled,
-                                modifier = Modifier.size(60.dp),
+                                modifier = Modifier.size(metrics.dp(60f)),
                                 onClick = viewModel::requestAppFilterReset,
                             )
                         }
@@ -210,13 +210,13 @@ fun AppFilterScreen(
                                 modifier = Modifier
                                     .align(Alignment.TopCenter)
                                     .offset(y = (-31).dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(metrics.dp(12f)))
                                     .background(AppFilterBgLighter.copy(alpha = 0.96f))
                                     .border(
                                         BorderStroke(1.dp, AppFilterAccentPrimary.copy(alpha = 0.45f)),
-                                        RoundedCornerShape(12.dp),
+                                        RoundedCornerShape(metrics.dp(12f)),
                                     )
-                                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                                    .padding(horizontal = metrics.dp(12f), vertical = metrics.dp(5f)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 AppFilterText(

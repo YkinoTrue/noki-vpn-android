@@ -79,7 +79,7 @@ fun SecurityScreen(
             val rowBackdrop = menuRowsBackdrop ?: backdrop
             val metrics = nokiAdaptiveMetrics(maxWidth)
             val language = state.personalizationSettings.language
-            val headerToFirstBlockGap = metrics.dp(3f) + metrics.dp(14.4f) + 20.dp
+            val headerToFirstBlockGap = metrics.dp(3f) + metrics.dp(14.4f) + metrics.dp(20f)
             val loggingEnabled = state.advancedSettings.connectionLogsEnabled ||
                 state.advancedSettings.errorLogsEnabled
             val isInvitedDevice = state.currentDeviceAccessRole.equals("invited", ignoreCase = true)
@@ -103,8 +103,8 @@ fun SecurityScreen(
                     .fillMaxSize()
                     .statusBarsPadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 21.dp)
-                    .padding(top = 58.dp, bottom = 150.dp),
+                    .padding(horizontal = metrics.contentStart)
+                    .padding(top = metrics.dp(58f), bottom = metrics.dp(150f)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 SecurityText(
@@ -114,18 +114,18 @@ fun SecurityScreen(
                     letterSpacing = 0f,
                     fontWeight = FontWeight.Normal,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .padding(start = 18.dp, end = 18.dp),
+                        .padding(start = metrics.dp(18f), end = metrics.dp(18f)),
                 )
 
                 Spacer(modifier = Modifier.height(headerToFirstBlockGap))
 
                 Column(
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(15.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(15f)),
                 ) {
                     SecurityGlassActionButton(
                         text = SecurityPresentationPolicy.emailLabel(state.userProfile, language),
@@ -137,7 +137,7 @@ fun SecurityScreen(
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp),
+                            .height(metrics.dp(60f)),
                         onClick = viewModel::openAccountEmailChange,
                     )
 
@@ -151,7 +151,7 @@ fun SecurityScreen(
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp),
+                            .height(metrics.dp(60f)),
                         onClick = viewModel::openAccountPasswordChange,
                     )
 
@@ -165,7 +165,7 @@ fun SecurityScreen(
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp),
+                            .height(metrics.dp(60f)),
                         onClick = viewModel::openAccountUsernameDialog,
                     )
 
@@ -177,7 +177,7 @@ fun SecurityScreen(
                             liveGlassEnabled = liveGlassEnabled,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(60.dp),
+                                .height(metrics.dp(60f)),
                             onDeleteClick = viewModel::requestTelegramUnlink,
                         )
                     } else {
@@ -191,7 +191,7 @@ fun SecurityScreen(
                             liveGlassEnabled = liveGlassEnabled,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(60.dp),
+                                .height(metrics.dp(60f)),
                             onClick = {
                                 if (isInvitedDevice) {
                                     viewModel.showCurrentDeviceAccessDenied()
@@ -226,7 +226,7 @@ fun SecurityScreen(
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp),
+                            .height(metrics.dp(60f)),
                         onClick = {},
                     )
 

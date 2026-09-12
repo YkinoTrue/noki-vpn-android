@@ -19,7 +19,11 @@ object LogoutStateReducer {
             accountSecurityState = AccountSecurityUiState(),
             telegramLoginState = TelegramLoginState.Idle,
             dialog = null,
-            userProfile = UserProfile(selectedCountryCode = current.userProfile.selectedCountryCode),
+            userProfile = UserProfile(
+                selectedCountryCode = current.userProfile.selectedCountryCode,
+                serverSelectionMode = current.userProfile.serverSelectionMode,
+                selectedNodeId = current.userProfile.selectedNodeId,
+            ),
             devices = emptyList(),
             endpointOptionsCountryCode = null,
             appNotificationHistory = emptyList(),
@@ -38,6 +42,7 @@ object LogoutStateReducer {
             incyDevices = IncyDevicesUiState(),
             connectionState = VpnConnectionState.DISCONNECTED,
             connectedAtMillis = null,
+            activeLatencyMs = null,
             connectionReason = "",
             inlineMessage = if (language == AppLanguage.RU) {
                 "Вы вышли из аккаунта"

@@ -111,6 +111,8 @@ internal fun AppUiRuntime.refreshEndpointOptions(
 ) {
     val attempt = authSessionCoordinator.attempt() ?: return
     val selectedCountryCode = uiState.userProfile.selectedCountryCode
+    val selectedMode = uiState.userProfile.serverSelectionMode
+    val selectedNodeId = uiState.userProfile.selectedNodeId
     if (!shouldRefreshEndpointOptions(
             force = force,
             optionsCount = uiState.endpointOptions.size,
@@ -146,7 +148,9 @@ internal fun AppUiRuntime.refreshEndpointOptions(
                 endpointOptionsRefreshJob !== ownerJob ||
                 !ownerJob.isActive ||
                 !authSessionCoordinator.isCurrent(attempt) ||
-                uiState.userProfile.selectedCountryCode != selectedCountryCode
+                uiState.userProfile.selectedCountryCode != selectedCountryCode ||
+                uiState.userProfile.serverSelectionMode != selectedMode ||
+                uiState.userProfile.selectedNodeId != selectedNodeId
             ) {
                 return@launch
             }

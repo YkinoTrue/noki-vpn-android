@@ -92,7 +92,9 @@ object VpnSettingsTransactionPolicy {
             persisted.advancedSettings.manualEndpointGroupKey != previous.advancedSettings.manualEndpointGroupKey ||
             persisted.userProfile.selectedPlanCode != previous.userProfile.selectedPlanCode ||
             persisted.userProfile.selectedPlanCodeRaw != previous.userProfile.selectedPlanCodeRaw ||
-            persisted.userProfile.selectedCountryCode != previous.userProfile.selectedCountryCode
+            persisted.userProfile.selectedCountryCode != previous.userProfile.selectedCountryCode ||
+            persisted.userProfile.serverSelectionMode != previous.userProfile.serverSelectionMode ||
+            persisted.userProfile.selectedNodeId != previous.userProfile.selectedNodeId
     }
 
     enum class Result {
@@ -129,6 +131,7 @@ object VpnSettingsTransactionPolicy {
                 selectedPlanCode = selected.userProfile.selectedPlanCode,
                 selectedPlanCodeRaw = selected.userProfile.selectedPlanCodeRaw,
                 selectedServerCode = selected.userProfile.selectedServerCode,
+                actualCountryCode = selected.userProfile.actualCountryCode,
             ),
             advancedSettings = persisted.advancedSettings.copy(
                 manualEndpointCode = selected.advancedSettings.manualEndpointCode,

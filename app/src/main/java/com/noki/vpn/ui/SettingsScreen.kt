@@ -122,6 +122,7 @@ fun SettingsScreen(
             }
             val metrics = nokiAdaptiveMetrics(maxWidth)
             val scale = metrics.contentScale
+            val menuScale = scale.coerceAtLeast(1f)
             val density = LocalDensity.current
             val navigationBottomInset = with(density) {
                 WindowInsets.navigationBars.getBottom(this).toDp()
@@ -129,7 +130,7 @@ fun SettingsScreen(
             val contentBottomReserve = navigationBottomInset +
                 metrics.dp(60f) +
                 metrics.dp(20f) +
-                NokiUiKitPolicy.primaryNavigationContentGapDp.dp
+                metrics.dp(NokiUiKitPolicy.primaryNavigationContentGapDp)
             val language = preparedSettings.language
             val isInvitedDevice = preparedSettings.isInvitedDevice
             val denyCurrentDeviceAccess = { viewModel.showCurrentDeviceAccessDenied() }
@@ -218,34 +219,34 @@ fun SettingsScreen(
                         .width(metrics.contentWidth)
                         .statusBarsPadding(),
                     contentPadding = PaddingValues(
-                        top = 20.dp,
+                        top = metrics.dp(20f),
                         bottom = contentBottomReserve,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(15.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(15f)),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     item(key = "settings-summary", contentType = "settings-summary") {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                            verticalArrangement = Arrangement.spacedBy(metrics.dp(15f)),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             SettingsProfileCardAdaptive(
                                 preparedState = preparedSettings,
                                 liveGlassEnabled = effectiveLiveGlassEnabled,
-                                scale = 1f,
+                                scale = scale,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(128.dp),
+                                    .height(metrics.dp(128f)),
                                 onPlanClicked = onPlanClicked,
                             )
 
                             SettingsTrafficCardAdaptive(
                                 presentation = trafficPresentation,
-                                scale = 1f,
+                                scale = scale,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(130.dp),
+                                    .height(metrics.dp(130f)),
                                 onPlanClicked = onPlanClicked,
                                 onStatsClicked = onStatsClicked,
                             )
@@ -264,11 +265,11 @@ fun SettingsScreen(
                             title = row.title,
                             backdrop = menuBackdrop,
                             liveGlassEnabled = effectiveLiveGlassEnabled,
-                            scale = 1f,
+                            scale = menuScale,
                             showBadge = row.showBadge,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(80.dp),
+                                .height(settingsDp(80f, menuScale)),
                             onClick = row.onClick,
                         )
                     }

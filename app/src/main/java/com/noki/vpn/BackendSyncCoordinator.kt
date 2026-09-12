@@ -1,5 +1,7 @@
 package com.noki.vpn
 
+import com.noki.vpn.data.withClientLatencies
+
 import com.noki.vpn.data.BackendBootstrapLoader
 import com.noki.vpn.data.BackendDevice
 import com.noki.vpn.data.BackendLocation
@@ -93,11 +95,9 @@ internal class BackendSyncCoordinator(
             state: AppUiState,
             clientLatencyByTarget: Map<String, Int>,
         ): AppUiState {
-            if (clientLatencyByTarget.isEmpty()) return state
             return state.copy(
                 locations = state.locations.map { location ->
-                    val targetKey = clientLatencyTargetKey(location)
-                    location.copy(latencyMs = targetKey?.let(clientLatencyByTarget::get) ?: location.latencyMs)
+                    location.withClientLatencies(clientLatencyByTarget)
                 },
             )
         }
@@ -108,6 +108,9 @@ internal class BackendSyncCoordinator(
         ): Boolean {
             return locations.any { location ->
                 if (!location.isOnline) return@any false
+                if (location.servers.isNotEmpty()) return@any location.servers.any {
+                    it.isOnline && it.probePort != null && clientLatencyTargetKey(it) !in clientLatencyByTarget
+                }
                 val targetKey = clientLatencyTargetKey(location) ?: return@any false
                 !clientLatencyByTarget.containsKey(targetKey)
             }

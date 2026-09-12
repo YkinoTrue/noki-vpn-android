@@ -6,6 +6,14 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.Locale
 
+internal fun JSONObject.toBackendPayment(): BackendPayment = BackendPayment(
+    publicId = getString("public_id"),
+    planCode = getString("plan_code"),
+    status = getString("status"),
+    amountRub = getInt("amount_rub"),
+    paymentUrl = optBackendString("payment_url"),
+)
+
 internal fun JSONObject.toBackendSubscription(): BackendSubscription =
     BackendSubscription(
         status = optString("status", "inactive"),
@@ -87,6 +95,24 @@ internal fun JSONObject.toBackendLocation(): BackendLocation =
         nameRu = optBackendString("name_ru"),
         nameEn = optBackendString("name_en"),
         entryHost = getString("entry_host"),
+        servers = optJSONArray("servers")?.let { nodes ->
+            (0 until nodes.length()).map { index ->
+                val node = nodes.getJSONObject(index)
+                VpnServer(
+                    id = node.getString("id"),
+                    name = node.getString("name"),
+                    countryCode = node.getString("country_code"),
+                    locationCode = node.getString("location_code"),
+                    host = node.getString("host"),
+                    probePort = node.optBackendInt("probe_port"),
+                    isOnline = node.optBoolean("is_online", false),
+                    capacityMbps = node.optBackendInt("capacity_mbps"),
+                    loadPercent = node.optBackendInt("load_percent"),
+                    metricsAt = node.optBackendString("metrics_at"),
+                    weight = node.optInt("weight", 1),
+                )
+            }
+        }.orEmpty(),
         countryCode = getString("country_code"),
         isOnline = optBoolean("is_online", false),
         capacityMbps = optBackendInt("capacity_mbps"),

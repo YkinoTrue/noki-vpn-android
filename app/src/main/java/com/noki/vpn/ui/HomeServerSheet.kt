@@ -1,6 +1,7 @@
 package com.noki.vpn.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
@@ -17,6 +18,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,10 +29,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -46,6 +51,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.noki.vpn.data.AppLanguage
 import com.noki.vpn.data.ServerLocation
+import com.noki.vpn.data.ServerSelectionMode
+import com.noki.vpn.data.UserProfile
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import kotlin.math.roundToInt
@@ -62,9 +69,11 @@ internal fun HomeServerDropdownOverlay(
     liveGlassEnabled: Boolean,
     animateRows: Boolean,
     onCollapse: () -> Unit,
-    onLocationSelected: (String) -> Unit,
+    onLocationSelected: (String, ServerSelectionMode) -> Unit,
+    userProfile: UserProfile,
 ) {
     val menuLocations = remember(locations) { serverMenuLocations(locations) }
+    var expandedCountry by remember { mutableStateOf<String?>(null) }
     NokiGlassSheetOverlay(
         modifier = modifier,
         visible = visible,
@@ -82,20 +91,99 @@ internal fun HomeServerDropdownOverlay(
             verticalArrangement = Arrangement.spacedBy(designDp(NokiUiKitPolicy.homeServerItemGapDp, scale)),
             contentPadding = PaddingValues(bottom = designDp(0f, scale)),
         ) {
+            item(key = "auto") {
+                Box(
+                    Modifier.fillMaxWidth().homeServerItemGlassSurface(
+                        shape = RoundedCornerShape(designDp(24f, scale)),
+                        backdrop = serverRowsBackdrop,
+                        liveGlassEnabled = liveGlassEnabled,
+                        scale = scale,
+                        selected = userProfile.serverSelectionMode == ServerSelectionMode.AUTO,
+                    ),
+                ) {
+                    HomeServerMenuItem(
+                        location = null,
+                        language = language,
+                        scale = scale,
+                        animateOnlineIndicator = animateRows,
+                        title = tr(language, "Автовыбор", "Automatic"),
+                        selected = userProfile.serverSelectionMode == ServerSelectionMode.AUTO,
+                        onClick = { onLocationSelected("", ServerSelectionMode.AUTO) },
+                    )
+                }
+            }
+            item(key = "countries-header") {
+                Text(
+                    text = tr(language, "Страны", "Countries"),
+                    color = HomeTextSecondary,
+                    fontFamily = ManropeFontFamily,
+                    fontSize = designSp(12f, scale),
+                    modifier = Modifier.padding(horizontal = designDp(4f, scale)),
+                )
+            }
             items(
                 items = menuLocations,
                 key = { it.key },
                 contentType = { "home-server-row" },
             ) { entry ->
-                HomeServerMenuItem(
-                    location = entry.location,
-                    language = language,
-                    scale = scale,
-                    backdrop = serverRowsBackdrop,
-                    liveGlassEnabled = liveGlassEnabled,
-                    animateOnlineIndicator = animateRows,
-                    onClick = { onLocationSelected(entry.location.code) },
-                )
+                val countrySelected = userProfile.serverSelectionMode == ServerSelectionMode.COUNTRY &&
+                    (entry.location.code.equals(userProfile.selectedCountryCode, true) ||
+                        entry.location.countryCode.equals(userProfile.selectedCountryCode, true))
+                val expanded = expandedCountry == entry.location.code
+                val shape = RoundedCornerShape(designDp(24f, scale))
+                Column(
+                    Modifier.fillMaxWidth()
+                        .homeServerItemGlassSurface(
+                            shape = shape,
+                            backdrop = serverRowsBackdrop,
+                            liveGlassEnabled = liveGlassEnabled,
+                            scale = scale,
+                            selected = countrySelected,
+                        )
+                        .clip(shape)
+                        .animateContentSize(),
+                ) {
+                    HomeServerMenuItem(
+                        location = entry.location,
+                        language = language,
+                        scale = scale,
+                        animateOnlineIndicator = animateRows,
+                        selected = countrySelected,
+                        expanded = expanded,
+                        onExpand = if (entry.location.servers.isEmpty()) null else {
+                            { expandedCountry = if (expandedCountry == entry.location.code) null else entry.location.code }
+                        },
+                        onClick = { onLocationSelected(entry.location.code, ServerSelectionMode.COUNTRY) },
+                    )
+                    if (expanded) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = designDp(18f, scale)),
+                            color = HomeTextSecondary.copy(alpha = 0.12f),
+                        )
+                        Column(Modifier.padding(designDp(8f, scale))) {
+                            entry.location.servers.forEach { server ->
+                                val serverSelected = userProfile.serverSelectionMode == ServerSelectionMode.SERVER &&
+                                    userProfile.selectedNodeId == server.id
+                                Box(
+                                    Modifier.clip(RoundedCornerShape(designDp(16f, scale)))
+                                        .background(if (serverSelected) HomeAccentPrimary.copy(alpha = 0.12f) else Color.Transparent),
+                                ) {
+                                    HomeServerMenuItem(
+                                        location = entry.location,
+                                        language = language,
+                                        scale = scale,
+                                        animateOnlineIndicator = animateRows,
+                                        title = server.name,
+                                        latencyMs = server.latencyMs,
+                                        online = server.isOnline,
+                                        selected = serverSelected,
+                                        onClick = { onLocationSelected(server.id, ServerSelectionMode.SERVER) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

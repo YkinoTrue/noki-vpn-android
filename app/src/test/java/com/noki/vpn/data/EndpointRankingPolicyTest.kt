@@ -5,6 +5,69 @@ import org.junit.Test
 
 class EndpointRankingPolicyTest {
     @Test
+    fun countryAndAutoUseWeightedRandomRatherThanAlwaysPickingTheHeaviestNode() {
+        val light = VpnServer("a", "A", "LV", "lv1", "a", 443, true,
+            metricsAt = "1970-01-01T00:00:00Z", weight = 1, latencyMs = 20)
+        val heavy = light.copy(id = "b", name = "B", weight = 9, latencyMs = 25)
+        for (mode in listOf(ServerSelectionMode.COUNTRY, ServerSelectionMode.AUTO)) {
+            val profile = UserProfile(serverSelectionMode = mode, selectedCountryCode = "LV")
+            val nodes = listOf(light, heavy.copy(countryCode = if (mode == ServerSelectionMode.AUTO) "FR" else "LV"),
+                heavy.copy(id = "offline", isOnline = false), heavy.copy(id = "zero", weight = 0))
+            val winners = (0 until 100).map { index ->
+                EndpointRankingPolicy.rankServers(nodes, profile, nowMillis = 0,
+                    random = { (index + 0.5) / 100.0 }).first().id
+            }.groupingBy { it }.eachCount()
+            assertEquals(mode.name, mapOf("a" to 10, "b" to 90), winners)
+        }
+    }
+
+    @Test
+    fun countryScopeExcludesFasterForeignNodesAndLatencyPoolExcludesSlowHeavyNodes() {
+        val fast = VpnServer("a", "A", "LV", "lv1", "a", 443, true,
+            metricsAt = "1970-01-01T00:00:00Z", weight = 1, latencyMs = 20)
+        val slow = fast.copy(id = "slow", weight = 10000, latencyMs = 100)
+        val foreign = fast.copy(id = "fr", countryCode = "FR", weight = 10000, latencyMs = 1)
+        val country = UserProfile(serverSelectionMode = ServerSelectionMode.COUNTRY, selectedCountryCode = "LV")
+        assertEquals(listOf("a", "slow"), EndpointRankingPolicy.rankServers(
+            listOf(slow, foreign, fast), country, nowMillis = 0, random = { 0.999 }).map { it.id })
+    }
+
+    @Test
+    fun nodeSelectionKeepsManualScopeAndWeightsNodesOnlyOnce() {
+        val nodes = listOf(
+            VpnServer("a", "A", "DE", "de1", "a", 443, true, metricsAt = "1970-01-01T00:00:00Z", weight = 1),
+            VpnServer("b", "B", "DE", "de2", "b", 443, true, metricsAt = "1970-01-01T00:00:00Z", weight = 9),
+            VpnServer("c", "C", "FR", "fr", "c", null, true),
+        )
+        val country = UserProfile(serverSelectionMode = ServerSelectionMode.COUNTRY, selectedCountryCode = "DE")
+        assertEquals(listOf("b", "a"), EndpointRankingPolicy.rankServers(nodes + nodes[1], country, nowMillis = 0, random = { 0.5 }).map { it.id })
+        val manual = country.copy(serverSelectionMode = ServerSelectionMode.SERVER, selectedNodeId = "c")
+        assertEquals(listOf("c"), EndpointRankingPolicy.rankServers(nodes, manual, nowMillis = 0).map { it.id })
+    }
+
+    @Test
+    fun nodeSelectionKeepsUnknownPingAsFallbackAndIgnoresStaleLoad() {
+        val nodes = listOf(
+            VpnServer("a", "A", "DE", "de", "a", 443, true, latencyMs = 20, weight = 1),
+            VpnServer("b", "B", "DE", "de", "b", null, true, weight = 100),
+            VpnServer("offline", "Offline", "DE", "de", "o", 443, false),
+        )
+        assertEquals(listOf("a", "b"), EndpointRankingPolicy.rankServers(nodes, UserProfile(serverSelectionMode = ServerSelectionMode.AUTO), nowMillis = 0).map { it.id })
+    }
+    @Test
+    fun autoRankingRetainsHysteriaAsLastFallbackOnEveryNetwork() {
+        for (network in EndpointRankingPolicy.NetworkKind.entries) {
+            val ranked = EndpointRankingPolicy.rankCandidates(
+                candidates = listOf(hysteriaCandidate("hy2"), tcpCandidate("tcp")),
+                health = emptyMap(),
+                networkKind = network,
+                nowMillis = 0L,
+            )
+            assertEquals(network.name, listOf("tcp", "hy2"), ranked.map { it.code })
+        }
+    }
+
+    @Test
     fun staleScoreMovesTowardBaselineBeforeSelection() {
         val dayMillis = 24 * 60 * 60 * 1_000L
         val nowMillis = dayMillis * 2
@@ -175,7 +238,6 @@ class EndpointRankingPolicyTest {
             networkKind = EndpointRankingPolicy.NetworkKind.OTHER,
             nowMillis = 0L,
             rotationIndex = { 0 },
-            allowHysteria = true,
         )
 
         assertEquals("hy2", selected?.candidate?.code)

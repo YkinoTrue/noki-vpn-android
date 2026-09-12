@@ -31,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
@@ -45,7 +44,6 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 
 @Composable
@@ -165,7 +163,7 @@ internal fun DeviceRow(
                 indication = null,
                 onClick = onClick,
             )
-            .padding(start = devicesDp(20f, scale)),
+            .padding(start = devicesDp(20f, scale), end = devicesDp(30f, scale)),
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(
@@ -228,7 +226,7 @@ internal fun DeleteDeviceDialog(
                 .padding(start = 21.dp, end = 21.dp, bottom = bottomPadding)
                 .fillMaxWidth()
                 .widthIn(max = 370.dp)
-                .height(devicesDp(338f, scale))
+                .height(devicesDp(350f, scale))
                 .clip(shape)
                 .then(
                     if (liveGlassEnabled && backdrop != null) {
@@ -316,11 +314,9 @@ internal fun DeleteDeviceDialog(
             DeleteDeviceButton(
                 language = language,
                 scale = scale,
-                backdrop = backdrop,
-                liveGlassEnabled = liveGlassEnabled,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = devicesDp(263f, scale)),
+                    .offset(y = devicesDp(275f, scale)),
                 onClick = onConfirm,
             )
             DevicesDialogButton(
@@ -330,7 +326,8 @@ internal fun DeleteDeviceDialog(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset(y = devicesDp(207f, scale))
-                    .width(devicesDp(220f, scale)),
+                    .width(devicesDp(300f, scale))
+                    .height(devicesDp(50f, scale)),
                 onClick = onRename,
             )
             FullAccessOptionRow(
@@ -427,8 +424,6 @@ internal fun AccessCheckbox(
 internal fun DeleteDeviceButton(
     language: AppLanguage,
     scale: Float,
-    backdrop: LayerBackdrop?,
-    liveGlassEnabled: Boolean,
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
@@ -439,30 +434,8 @@ internal fun DeleteDeviceButton(
         modifier = modifier
             .width(devicesDp(300f, scale))
             .height(devicesDp(50f, scale))
-            .then(
-                if (liveGlassEnabled && backdrop != null) {
-                    Modifier.drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { shape },
-                        effects = { vibrancy() },
-                        highlight = {
-                            Highlight.Default.copy(
-                                width = 0.5.dp,
-                                blurRadius = 0.25.dp,
-                                alpha = 0.18f,
-                            )
-                        },
-                        onDrawSurface = {
-                            drawRect(buttonColor, blendMode = BlendMode.Hue)
-                            drawRect(buttonColor.copy(alpha = 0.75f))
-                        },
-                    )
-                } else {
-                    Modifier
-                        .clip(shape)
-                        .background(buttonColor, shape)
-                },
-            )
+            .clip(shape)
+            .background(buttonColor, shape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,

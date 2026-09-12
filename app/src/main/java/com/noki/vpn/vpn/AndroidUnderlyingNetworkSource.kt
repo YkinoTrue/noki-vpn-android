@@ -37,6 +37,7 @@ internal class AndroidUnderlyingNetworkSource(
         return UnderlyingNetworkObservation(
             availability = selection.availability,
             candidate = UnderlyingNetworkSnapshot(
+                network = selected.value,
                 kind = selected.kind,
                 signature = "${selected.value}:${selected.kind.name}:${selected.isValidated}:${selected.isNotMetered}",
                 vpnShouldBeMetered = vpnShouldBeMetered,

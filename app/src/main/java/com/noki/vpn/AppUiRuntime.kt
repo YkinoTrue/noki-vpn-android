@@ -66,7 +66,7 @@ internal class AppUiRuntime(
     )
     internal val accountDeletionCoordinator = AccountDeletionCoordinator(authSessionCoordinator, backendApi)
     internal val settingsMutationCoordinator = SettingsMutationCoordinator(repository)
-    internal val clientLatencySampler = ClientLatencySampler()
+    internal val clientLatencySampler = ClientLatencySampler(context = application)
     internal val appLogUploadCoordinator = AppLogUploadCoordinator(
         exportLogs = { repository.exportAppLogs() },
         shouldUploadAutomatically = { repository.shouldUploadAppLogsAutomatically() },
@@ -124,6 +124,7 @@ internal class AppUiRuntime(
     internal var runtimeSettingsSyncJob: Job? = null
     internal var clientLatencyRefreshJob: Job? = null
     internal var clientLatencyRefreshTarget: List<String>? = null
+    internal var clientLatencyRefreshNetworkSignature: String? = null
     internal var sessionOperationJob: Job? = null
     internal var sessionOperationAllowsReplacement: Boolean = false
     internal var logUploadJob: Job? = null
@@ -186,6 +187,36 @@ internal class AppUiRuntime(
         applyUser = { user, returnToSecurity ->
             applyAccountSecurityUser(user = user, returnToSecurity = returnToSecurity)
         },
+    )
+
+    internal val paymentCheckoutWorkflow = PaymentCheckoutWorkflow(
+        scope = scope,
+        currentState = { uiState },
+        publishState = { uiState = it },
+        currentAuthAttempt = { authSessionCoordinator.attempt() },
+        isCurrent = authSessionCoordinator::isCurrent,
+        loadConfig = backendApi::paymentConfig,
+        create = { attempt, planCode, method ->
+            val deviceId = backendDeviceId
+            val deviceKey = backendDeviceKey
+            authSessionCoordinator.run(attempt) { token ->
+                backendApi.createPayment(token, planCode, method, deviceId, deviceKey)
+            }
+        },
+        loadPayments = { attempt ->
+            val deviceId = backendDeviceId
+            val deviceKey = backendDeviceKey
+            authSessionCoordinator.run(attempt) { token -> backendApi.payments(token, deviceId, deviceKey) }
+        },
+        restorePaymentId = {
+            savedStateHandle.get<String>("checkout.device")?.takeIf { it == backendDeviceId && it.isNotBlank() }
+                ?.let { savedStateHandle.get<String>("checkout.payment") }
+        },
+        savePaymentId = { id ->
+            savedStateHandle["checkout.device"] = if (id == null) null else backendDeviceId
+            savedStateHandle["checkout.payment"] = id
+        },
+        onPaid = { refreshAllData(showNetworkFailureInline = false) },
     )
 
     init {

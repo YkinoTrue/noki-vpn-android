@@ -12,6 +12,22 @@ class AuthRefreshRejectedException(
     val rejection: BackendException,
 ) : IllegalStateException("auth_refresh_rejected", rejection)
 
+data class BackendPaymentMethod(val id: Int?, val code: String, val label: String, val enabled: Boolean)
+
+data class BackendPaymentConfig(
+    val configured: Boolean,
+    val checkoutEnabled: Boolean,
+    val methods: List<BackendPaymentMethod>,
+)
+
+data class BackendPayment(
+    val publicId: String,
+    val planCode: String,
+    val status: String,
+    val amountRub: Int,
+    val paymentUrl: String?,
+)
+
 data class BackendUser(
     val id: String,
     val username: String,
@@ -166,6 +182,7 @@ data class BackendLocation(
     val uploadMbps: Double?,
     val latencyMs: Int?,
     val loadPercent: Int?,
+    val servers: List<VpnServer> = emptyList(),
 )
 
 data class BackendPlan(

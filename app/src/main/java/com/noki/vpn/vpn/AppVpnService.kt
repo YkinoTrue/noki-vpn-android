@@ -41,6 +41,7 @@ import com.noki.vpn.data.VpnConnectionState
 import com.noki.vpn.data.VpnIncidentReport
 import com.noki.vpn.data.VpnSessionSelection
 import com.noki.vpn.data.VpnStartCoordinator
+import com.noki.vpn.data.VpnProfileValidator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -912,71 +913,138 @@ class AppVpnService : VpnService() {
                 serverCountry = notificationServerLabel,
             )
         }
-        val config = XrayConfigFactory.build(
-            settings.profile,
-            settings.advancedSettings,
-        )
-        val started = connectionOrchestrator.startXray(config)
-        recordDiagnostic(
-            repository = repository,
-            message = "xray_start_result",
-            details = "generation=$generationId; started=$started; config_chars=${config.length}",
-            level = if (started) "info" else "error",
-        )
-        if (!connectionOrchestrator.isCurrent(generationId)) {
-            connectionOrchestrator.stopXray()
-            if (tunnel === established) tunnel = null
-            runCatching { established.close() }
-            return@withLifecycleLock
+        var fallbackSession = preparedMetadata?.pendingWarmupSession?.session?.takeIf {
+            runtimeMode == VpnRuntimeMode.ACCOUNT &&
+                settings.advancedSettings.endpointSelectionMode == EndpointSelectionMode.AUTO
         }
-        val readinessLatencyMs = if (started) measureRuntimeReadiness(recovery = true) else null
-        if (!connectionOrchestrator.isCurrent(generationId) || !currentCoroutineContext().isActive) {
-            connectionOrchestrator.stopXray()
-            if (tunnel === established) tunnel = null
-            runCatching { established.close() }
-            return@withLifecycleLock
-        }
-        val failureReason = VpnReadinessPolicy.failureReason(started, readinessLatencyMs)
-        if (failureReason != null) {
+        val excludedCodes = preparedMetadata?.pendingWarmupSession?.selection
+            ?.precheckFailedEndpointCodes.orEmpty().toMutableSet()
+        val excludedNodeIds = mutableSetOf<String>()
+        var attemptSettings = settings
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            if (!connectionOrchestrator.isCurrent(generationId)) return@withLifecycleLock
+            excludedCodes += attemptSettings.profile.endpointCode
+            val config = XrayConfigFactory.build(
+                attemptSettings.profile,
+                attemptSettings.advancedSettings,
+            )
+            val started = connectionOrchestrator.startXray(config)
+            recordDiagnostic(
+                repository = repository,
+                message = "xray_start_result",
+                details = "generation=$generationId; endpoint=${attemptSettings.profile.endpointCode}; started=$started; config_chars=${config.length}",
+                level = if (started) "info" else "error",
+            )
+            if (!connectionOrchestrator.isCurrent(generationId)) {
+                connectionOrchestrator.stopXray()
+                if (tunnel === established) tunnel = null
+                runCatching { established.close() }
+                return@withLifecycleLock
+            }
+            val readinessLatencyMs = if (started) measureRuntimeReadiness(recovery = true) else null
+            if (!connectionOrchestrator.isCurrent(generationId) || !currentCoroutineContext().isActive) {
+                connectionOrchestrator.stopXray()
+                if (tunnel === established) tunnel = null
+                runCatching { established.close() }
+                return@withLifecycleLock
+            }
+            val failureReason = VpnReadinessPolicy.failureReason(started, readinessLatencyMs)
+            if (failureReason == null) {
+                finishTunnelConnected(
+                    repository = repository,
+                    settings = attemptSettings,
+                    preparationBaseline = preparationBaseline,
+                    generationId = generationId,
+                    resetConnectedAt = true,
+                    readinessLatencyMs = readinessLatencyMs,
+                    persistSettings = persistSettings,
+                    runtimeMode = runtimeMode,
+                )
+                return@withLifecycleLock
+            }
+
             Log.e(TAG, "Xray connection failed: $failureReason")
             connectionOrchestrator.stopXray()
-            if (runtimeMode == VpnRuntimeMode.ACCOUNT) {
-                val health = repository.recordEndpointResult(
-                    endpointCode = settings.profile.endpointCode,
-                    success = false,
-                    networkKind = activeEndpointNetworkKind,
-                )
+            if (runtimeMode != VpnRuntimeMode.ACCOUNT) {
+                failStart(repository, failureReason, category = "xray")
+                return@withLifecycleLock
+            }
+            val health = repository.recordEndpointResult(
+                endpointCode = attemptSettings.profile.endpointCode,
+                success = false,
+                networkKind = activeEndpointNetworkKind,
+            )
+            val failedSettings = attemptSettings
+            val failedNetworkKind = activeEndpointNetworkKind
+            backgroundScope.launch {
                 recordEndpointHealthEvent(
                     repository = repository,
-                    settings = settings,
-                    endpointCode = settings.profile.endpointCode,
-                    networkKind = activeEndpointNetworkKind,
+                    settings = failedSettings,
+                    endpointCode = failedSettings.profile.endpointCode,
+                    networkKind = failedNetworkKind,
                     eventType = EndpointHealthEventType.CONNECT_FAIL,
                     success = false,
                     slow = false,
                     health = health,
                 )
-                failClosedAfterReplacementFailure(
-                    repository = repository,
-                    settings = settings,
-                    reason = failureReason,
-                )
-            } else {
-                failStart(repository, failureReason, category = "xray")
             }
+            val remaining = fallbackSession?.endpointCandidates.orEmpty()
+                .filterNot { it.code in excludedCodes }
+            val nextSelection = if (remaining.isNotEmpty() && fallbackSession != null) {
+                EndpointSelector.selectionForSession(
+                    context = this@AppVpnService,
+                    session = fallbackSession.copy(endpointCandidates = remaining),
+                    settings = settings.advancedSettings,
+                    endpointHealth = repository.loadEndpointHealth(activeEndpointNetworkKind),
+                    rotationIndex = repository::nextEndpointRotationIndex,
+                    networkKind = activeEndpointNetworkKind,
+                )
+            } else null
+            val nextSettings = nextSelection?.let { settings.copy(profile = it.profile) }
+            if (nextSettings != null &&
+                nextSettings.profile.endpointCode !in excludedCodes &&
+                VpnProfileValidator.isUsable(nextSettings)
+            ) {
+                repository.recordAppLog(
+                    category = "vpn",
+                    message = "startup_endpoint_fallback",
+                    details = "from=${attemptSettings.profile.endpointCode}; to=${nextSettings.profile.endpointCode}; reason=$failureReason",
+                )
+                attemptSettings = nextSettings
+                continue
+            }
+            val failedNodeId = fallbackSession?.endpointCandidates?.firstOrNull { it.code == attemptSettings.profile.endpointCode }?.nodeId
+            if (failedNodeId != null) excludedNodeIds += failedNodeId
+            if (failedNodeId != null && settings.userProfile.serverSelectionMode != com.noki.vpn.data.ServerSelectionMode.SERVER) {
+                val nextNode = prepareConnectionSettings(
+                    repository = repository,
+                    forceRefreshSession = true,
+                    allowCachedFallback = false,
+                    destructiveOnFailure = false,
+                    sessionSelection = VpnSessionSelection(
+                        countryCode = settings.userProfile.selectedCountryCode,
+                        excludedNodeIds = excludedNodeIds.toSet(),
+                    ),
+                )
+                if (!connectionOrchestrator.isCurrent(generationId)) return@withLifecycleLock
+                if (nextNode != null) {
+                    attemptSettings = normalizeInstalledPackages(nextNode.candidateSettings)
+                    fallbackSession = nextNode.pendingWarmupSession?.session
+                    excludedCodes.clear()
+                    excludedCodes += nextNode.pendingWarmupSession?.selection?.precheckFailedEndpointCodes.orEmpty()
+                    acceptPreparedMetadata(repository, nextNode)
+                    notificationServerLabel = VpnServiceLogContext.serverLabel(attemptSettings)
+                    continue
+                }
+            }
+            failClosedAfterReplacementFailure(
+                repository = repository,
+                settings = attemptSettings,
+                reason = failureReason,
+            )
             return@withLifecycleLock
         }
-
-        finishTunnelConnected(
-            repository = repository,
-            settings = settings,
-            preparationBaseline = preparationBaseline,
-            generationId = generationId,
-            resetConnectedAt = true,
-            readinessLatencyMs = readinessLatencyMs,
-            persistSettings = persistSettings,
-            runtimeMode = runtimeMode,
-        )
     }
 
     private fun refreshConnectedVpn(allowCachedFallback: Boolean) {
@@ -1096,8 +1164,9 @@ class AppVpnService : VpnService() {
                     destructiveOnFailure = false,
                     sessionSelection = VpnSessionSelection(
                         countryCode = countryCode,
-                        locationCode = target.locationCode,
-                        excludeLocationCode = target.excludeLocationCode,
+                        locationCode = target.locationCode.takeUnless { previousSettings.userProfile.serverSelectionMode == com.noki.vpn.data.ServerSelectionMode.SERVER },
+                        excludeLocationCode = target.excludeLocationCode.takeUnless { previousSettings.userProfile.serverSelectionMode == com.noki.vpn.data.ServerSelectionMode.SERVER },
+                        nodeId = previousSettings.userProfile.selectedNodeId.takeIf { previousSettings.userProfile.serverSelectionMode == com.noki.vpn.data.ServerSelectionMode.SERVER },
                     ),
                     incidentId = incidentId,
                     onFailure = { prepareFailure = it },
@@ -2475,7 +2544,7 @@ class AppVpnService : VpnService() {
         }
         val repository = SettingsRepository(this)
         statsCoordinator.start(repository, settings, owner)
-        DeviceTrafficMonitor.start()
+        DeviceTrafficMonitor.start(sessionId = checkNotNull(connectedAtMillis))
         startNotificationTicker()
         startNetworkChangeMonitor(activeEndpointNetworkKind)
         endpointHealthController.start(owner, settings)

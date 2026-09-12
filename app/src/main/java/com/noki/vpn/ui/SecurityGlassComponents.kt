@@ -58,6 +58,7 @@ internal fun SecurityPanelSurface(
     exportedBackdrop: LayerBackdrop? = null,
     content: @Composable () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -68,14 +69,14 @@ internal fun SecurityPanelSurface(
         ),
         label = "SecurityPanelButtonScale",
     )
-    val shape = RoundedCornerShape(24.dp)
+    val shape = RoundedCornerShape(metrics.dp(24f))
     Box(
         modifier = modifier
             .nokiSettingsPanelGlassSurface(
                 shape = shape,
                 backdrop = backdrop,
                 liveGlassEnabled = liveGlassEnabled,
-                scale = 1f,
+                scale = metrics.contentScale,
                 elevationDp = 8f,
                 shadowAlpha = 0.25f,
                 surfaceColor = SecurityBgLighter.copy(alpha = 0.80f),

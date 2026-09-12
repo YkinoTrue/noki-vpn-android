@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
@@ -49,6 +50,7 @@ internal fun AdvancedProtocolToggleCard(
     modifier: Modifier,
     onAutoEndpointSelectionChanged: (Boolean) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     AdvancedPanelSurface(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
@@ -57,7 +59,7 @@ internal fun AdvancedProtocolToggleCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = metrics.dp(20f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -69,11 +71,12 @@ internal fun AdvancedProtocolToggleCard(
                 modifier = Modifier.weight(1f),
             )
             NokiLiquidToggle(
+                sizeFactor = metrics.contentScale,
                 selected = autoEndpointSelection,
                 onSelectedChange = onAutoEndpointSelectionChanged,
                 backdrop = backdrop,
                 liveGlassEnabled = liveGlassEnabled,
-                modifier = Modifier.padding(start = 14.dp),
+                modifier = Modifier.padding(start = metrics.dp(14f)),
             )
         }
     }
@@ -88,6 +91,7 @@ internal fun AdvancedManualProtocolCard(
     modifier: Modifier,
     onChangeProtocol: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val panelBackdrop = rememberLayerBackdrop()
     AdvancedPanelSurface(
         backdrop = backdrop,
@@ -98,8 +102,8 @@ internal fun AdvancedManualProtocolCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = metrics.dp(20f)),
+            horizontalArrangement = Arrangement.spacedBy(metrics.dp(16f)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -122,8 +126,8 @@ internal fun AdvancedManualProtocolCard(
             AdvancedSmallButton(
                 text = tr(language, "Сменить", "Change"),
                 modifier = Modifier
-                    .width(90.dp)
-                    .height(36.dp),
+                    .width(metrics.dp(90f))
+                    .height(metrics.dp(36f)),
                 backdrop = panelBackdrop,
                 liveGlassEnabled = liveGlassEnabled,
                 glassEnabled = true,
@@ -145,6 +149,7 @@ internal fun AdvancedProtocolSheet(
     onDismiss: () -> Unit,
     onProtocolSelected: (VpnEndpointOption?) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val density = LocalDensity.current
     val navigationBottomInset = WindowInsets.navigationBars.getBottom(density)
     val bottomPadding = with(density) { navigationBottomInset.toDp() } + bottomNavigationClearance
@@ -165,10 +170,10 @@ internal fun AdvancedProtocolSheet(
             cardBrightness = -0.01f,
             modifier = Modifier
                 .padding(bottom = bottomPadding)
-                .padding(horizontal = 21.dp)
-                .widthIn(max = 370.dp)
+                .padding(horizontal = metrics.contentStart)
+                .widthIn(max = metrics.dp(370f))
                 .fillMaxWidth()
-                .heightIn(min = 330.dp, max = 560.dp)
+                .heightIn(min = metrics.dp(330f), max = metrics.dp(560f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -178,8 +183,8 @@ internal fun AdvancedProtocolSheet(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(17.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(metrics.dp(17f)),
+                verticalArrangement = Arrangement.spacedBy(metrics.dp(10f)),
             ) {
                 AdvancedText(
                     text = tr(language, "Выберите протокол", "Choose protocol"),
@@ -201,7 +206,7 @@ internal fun AdvancedProtocolSheet(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(7f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -226,17 +231,18 @@ internal fun AdvancedProtocolOption(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(24.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(24f))
     val borderColor = if (selected) AdvancedAccentPrimary.copy(alpha = 0.75f) else AdvancedStroke.copy(alpha = 0.72f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
+            .height(metrics.dp(46f))
             .clip(shape)
             .background(if (selected) AdvancedAccentPrimary.copy(alpha = 0.12f) else AdvancedBgSoft, shape)
             .border(BorderStroke(1.dp, borderColor), shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = metrics.dp(16f)),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -261,7 +267,7 @@ internal fun AdvancedProtocolOption(
                 lineHeight = 13.2f,
                 color = AdvancedAccentPrimary,
                 textAlign = TextAlign.End,
-                modifier = Modifier.width(70.dp),
+                modifier = Modifier.width(metrics.dp(70f)),
             )
         }
     }
@@ -272,13 +278,14 @@ internal fun AdvancedProtocolNotice(
     text: String,
     modifier: Modifier,
 ) {
-    val shape = RoundedCornerShape(24.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(24f))
     Box(
         modifier = modifier
             .clip(shape)
             .background(AdvancedBgLighter.copy(alpha = 0.96f), shape)
             .border(BorderStroke(1.dp, AdvancedStroke.copy(alpha = 0.9f)), shape)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = metrics.dp(16f)),
         contentAlignment = Alignment.Center,
     ) {
         AdvancedText(

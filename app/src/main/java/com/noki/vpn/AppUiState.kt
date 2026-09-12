@@ -17,6 +17,7 @@ import com.noki.vpn.data.PlanCode
 import com.noki.vpn.data.PlanSummary
 import com.noki.vpn.data.SecuritySettings
 import com.noki.vpn.data.ServerLocation
+import com.noki.vpn.data.ServerSelectionMode
 import com.noki.vpn.data.UsageBar
 import com.noki.vpn.data.UserProfile
 import com.noki.vpn.data.VlessProfile
@@ -91,7 +92,10 @@ sealed interface AppDialog {
     data object EmptySelectedApps : AppDialog
     data object VpnConflict : AppDialog
     data object ResetAppFilter : AppDialog
-    data class ChangeServer(val locationCode: String) : AppDialog
+    data class ChangeServer(
+        val locationCode: String,
+        val mode: ServerSelectionMode = ServerSelectionMode.COUNTRY,
+    ) : AppDialog
     data class DeleteAccount(
         val isDeleting: Boolean = false,
         val error: String? = null,
@@ -391,6 +395,7 @@ object SettingsPreparedStatePolicy {
 }
 
 data class AppUiState(
+    val paymentCheckout: PaymentCheckoutState = PaymentCheckoutState(),
     val isReady: Boolean = false,
     val screenStack: List<AppDestination> = listOf(AppDestination.SPLASH),
     val profile: VlessProfile = VlessProfile(),
@@ -408,6 +413,7 @@ data class AppUiState(
     val connectionState: VpnConnectionState = VpnConnectionState.DISCONNECTED,
     val vpnRuntimeMode: VpnRuntimeMode = VpnRuntimeMode.ACCOUNT,
     val connectedAtMillis: Long? = null,
+    val activeLatencyMs: Int? = null,
     val connectionReason: String = "",
     val inlineMessage: String? = null,
     val authStep: AuthStep = AuthStep.WELCOME,

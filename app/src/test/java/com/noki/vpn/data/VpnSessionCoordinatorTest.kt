@@ -117,13 +117,14 @@ class VpnSessionCoordinatorTest {
         val result = coordinator.prepare("token", settings, knownDevices = listOf(device))
 
         assertEquals("DE", api.countryCode)
-        assertNull(api.locationCode)
+        assertEquals("de-2", api.locationCode)
+        assertEquals("node-de-2", api.nodeId)
         assertEquals("DE", result.settings.userProfile.selectedCountryCode)
         assertEquals("de-2", result.settings.userProfile.selectedServerCode)
     }
 
     @Test
-    fun `country request falls back to stored concrete server for legacy backend`() = runBlocking {
+    fun `country request always sends catalog node and concrete location`() = runBlocking {
         val api = FakeVpnSessionApi(rejectCountryRequest = true)
         val device = BackendDevice(
             id = "device-id",
@@ -158,11 +159,11 @@ class VpnSessionCoordinatorTest {
 
         coordinator.prepare("token", settings, knownDevices = listOf(device))
 
-        assertEquals(listOf("LV" to null, null to "lv"), api.requests)
+        assertEquals(listOf("LV" to "lv2"), api.requests)
     }
 
     @Test
-    fun `blank country uses stored concrete server without invalid request`() = runBlocking {
+    fun `saved country selects its permitted catalog node`() = runBlocking {
         val api = FakeVpnSessionApi()
         val device = BackendDevice(
             id = "device-id",
@@ -175,7 +176,7 @@ class VpnSessionCoordinatorTest {
         )
         val settings = DefaultStoredSettingsFactory.create().copy(
             userProfile = UserProfile(
-                selectedCountryCode = "",
+                selectedCountryCode = "LV",
                 selectedServerCode = "lv2",
             ),
             backendDeviceId = device.id,
@@ -197,7 +198,7 @@ class VpnSessionCoordinatorTest {
 
         coordinator.prepare("token", settings, knownDevices = listOf(device))
 
-        assertEquals(listOf(null to "lv2"), api.requests)
+        assertEquals(listOf("LV" to "lv2"), api.requests)
     }
 
     private class FakeVpnSessionStore : VpnSessionStore {
@@ -211,8 +212,15 @@ class VpnSessionCoordinatorTest {
         private val sessionError: BackendException? = null,
         private val candidates: List<BackendEndpointCandidate> = emptyList(),
     ) : VpnSessionApi {
+        override suspend fun serverLocations(token: String, deviceId: String?, deviceKey: String?): List<BackendLocation> =
+            listOf("DE" to "de-2", "LV" to "lv2").map { (country, location) ->
+                BackendLocation(location, location, country, null, null, "node.example", country, true,
+                    null, null, null, null, null,
+                    servers = listOf(VpnServer("node-$location", country, country, location, "node.example", null, true)))
+            }
         var countryCode: String? = null
         var locationCode: String? = null
+        var nodeId: String? = null
         val requests = mutableListOf<Pair<String?, String?>>()
 
         override suspend fun vpnAccess(
@@ -246,10 +254,12 @@ class VpnSessionCoordinatorTest {
             locationCode: String?,
             excludeLocationCode: String?,
             profileCode: String,
+            nodeId: String?,
         ): BackendVpnSession {
             sessionError?.let { throw it }
             this.countryCode = countryCode
             this.locationCode = locationCode
+            this.nodeId = nodeId
             requests += countryCode to locationCode
             if (rejectCountryRequest && countryCode != null && locationCode == null) {
                 throw BackendException("Location not found", 503)

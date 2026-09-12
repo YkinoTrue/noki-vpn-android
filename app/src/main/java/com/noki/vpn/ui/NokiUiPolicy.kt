@@ -39,8 +39,7 @@ internal object NokiUiKitPolicy {
     const val homeQuickPillHeightDp = 48f
     const val advancedProtocolToggleCardHeightDp = 70f
     const val advancedManualProtocolCardHeightDp = 76f
-    const val advancedFilterCardHeightDp = 320f
-    const val advancedFilterConfigureButtonHeightDp = 42f
+    const val settingsInlineActionHeightDp = 42f
     const val planActionButtonHeightDp = 56f
     const val advancedFilterOptionHeightDp = 50f
     const val advancedFilterOptionGapDp = 10f

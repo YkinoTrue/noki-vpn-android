@@ -14,15 +14,16 @@ internal data class NokiAdaptiveMetrics(
 internal fun nokiAdaptiveMetrics(
     screenWidth: Dp,
     sidePadding: Dp = 21.dp,
-    maxContentWidth: Dp = 370.dp,
+    maxContentWidth: Dp = 480.dp,
+    designContentWidth: Dp = 370.dp,
 ): NokiAdaptiveMetrics {
     val available = (screenWidth - sidePadding * 2f).coerceAtLeast(0.dp)
     val contentWidth = available.coerceAtMost(maxContentWidth)
     return NokiAdaptiveMetrics(
         contentStart = (screenWidth - contentWidth) / 2f,
         contentWidth = contentWidth,
-        contentScale = if (maxContentWidth.value > 0f) {
-            (contentWidth.value / maxContentWidth.value).coerceAtMost(1f)
+        contentScale = if (designContentWidth.value > 0f) {
+            contentWidth.value / designContentWidth.value
         } else {
             1f
         },

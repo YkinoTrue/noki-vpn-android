@@ -3,6 +3,45 @@ package com.noki.vpn.data
 import java.util.Locale
 
 object EndpointRankingPolicy {
+    /** Rank each physical server once, before selecting its transport endpoints. */
+    fun rankServers(
+        servers: List<VpnServer>,
+        profile: UserProfile,
+        nowMillis: Long = System.currentTimeMillis(),
+        random: () -> Double = { kotlin.random.Random.nextDouble() },
+    ): List<VpnServer> {
+        val remaining = servers.distinctBy { it.id }.filter { server ->
+            server.isOnline && server.weight > 0 && when (profile.serverSelectionMode) {
+                ServerSelectionMode.AUTO -> true
+                ServerSelectionMode.COUNTRY -> server.countryCode.equals(profile.selectedCountryCode, true)
+                ServerSelectionMode.SERVER -> server.id == profile.selectedNodeId
+            }
+        }.toMutableList()
+        return buildList {
+            while (remaining.isNotEmpty()) {
+                val fastest = remaining.mapNotNull { it.latencyMs }.minOrNull()
+                val pool = if (fastest == null) remaining.toList() else remaining.filter {
+                    it.latencyMs?.let { ping -> ping <= fastest + maxOf(20, fastest / 4) } == true
+                }
+                val weights = pool.map { server ->
+                    val metricsTime = server.metricsAt?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+                    // Unknown/stale telemetry is neutral, never an invented empty server.
+                    if (metricsTime != null && nowMillis - metricsTime in 0..120_000L) {
+                        server.weight.toDouble().coerceAtLeast(1.0)
+                    } else 1.0
+                }
+                var ticket = random().coerceIn(0.0, 0.999999999) * weights.sum()
+                var chosen = pool.last()
+                for (index in pool.indices) {
+                    ticket -= weights[index]
+                    if (ticket < 0) { chosen = pool[index]; break }
+                }
+                add(chosen)
+                remaining.remove(chosen)
+            }
+        }
+    }
+
     private const val DEFAULT_SCORE = 70
     private const val SUCCESS_SCORE_DELTA = 8
     private const val FAILURE_SCORE_DELTA = 25
@@ -31,15 +70,12 @@ object EndpointRankingPolicy {
         nowMillis: Long,
         rotationIndex: (String) -> Int,
         excludedCodes: Set<String> = emptySet(),
-        allowHysteria: Boolean = false,
     ): Selection? {
         val eligibleWithoutCooldown = eligibleCandidates(
             candidates = candidates,
             health = health,
             nowMillis = nowMillis,
             excludedCodes = excludedCodes,
-            includeHysteria = allowHysteria ||
-                shouldIncludeAutoHysteria(candidates, networkKind, excludedCodes),
         )
         val eligible = eligibleWithoutCooldown.ifEmpty {
             eligibleCandidates(
@@ -47,14 +83,12 @@ object EndpointRankingPolicy {
                 health = health,
                 nowMillis = nowMillis,
                 excludedCodes = excludedCodes,
-                includeHysteria = allowHysteria ||
-                    shouldIncludeAutoHysteria(candidates, networkKind, excludedCodes),
                 ignoreCooldown = true,
             )
         }
         if (eligible.isEmpty()) return null
 
-        return preferredClasses(networkKind, allowHysteria)
+        return preferredClasses(networkKind)
             .asSequence()
             .mapNotNull { endpointClass ->
                 val classCandidates = eligible.filter { classify(it) == endpointClass }
@@ -96,14 +130,12 @@ object EndpointRankingPolicy {
             candidates = candidates,
             health = health,
             nowMillis = nowMillis,
-            includeHysteria = shouldIncludeAutoHysteria(candidates, networkKind),
         )
         val eligible = eligibleWithoutCooldown.ifEmpty {
             eligibleCandidates(
                 candidates = candidates,
                 health = health,
                 nowMillis = nowMillis,
-                includeHysteria = shouldIncludeAutoHysteria(candidates, networkKind),
                 ignoreCooldown = true,
             )
         }
@@ -190,7 +222,6 @@ object EndpointRankingPolicy {
 
     private fun preferredClasses(
         networkKind: NetworkKind,
-        allowHysteria: Boolean = false,
     ): List<String> {
         return when (networkKind) {
             NetworkKind.WIFI -> listOf(CLASS_REALITY_TCP, CLASS_REALITY_XHTTP_STREAM, CLASS_REALITY_XHTTP_PACKET, CLASS_TLS_TCP, CLASS_HYSTERIA)
@@ -200,7 +231,8 @@ object EndpointRankingPolicy {
                 CLASS_REALITY_XHTTP_PACKET,
                 CLASS_REALITY_TCP,
                 CLASS_TLS_TCP,
-            ) + if (allowHysteria) listOf(CLASS_HYSTERIA) else emptyList()
+                CLASS_HYSTERIA,
+            )
         }
     }
 
@@ -223,7 +255,6 @@ object EndpointRankingPolicy {
         health: Map<String, EndpointHealth>,
         nowMillis: Long,
         excludedCodes: Set<String> = emptySet(),
-        includeHysteria: Boolean = false,
         ignoreCooldown: Boolean = false,
     ): List<BackendEndpointCandidate> {
         return candidates
@@ -231,25 +262,10 @@ object EndpointRankingPolicy {
             .filter { it.entryHost.isNotBlank() }
             .filter { it.code !in excludedCodes }
             .filter(EndpointSecurityPolicy::isAllowedCandidate)
-            .filter { includeHysteria || !EndpointTransportPolicy.isHysteria(it) }
             .filter { candidate ->
                 val state = health[candidate.code]
                 ignoreCooldown || state == null || state.cooldownUntilMillis <= nowMillis
             }
-    }
-
-    private fun shouldIncludeAutoHysteria(
-        candidates: List<BackendEndpointCandidate>,
-        networkKind: NetworkKind,
-        excludedCodes: Set<String> = emptySet(),
-    ): Boolean {
-        if (networkKind != NetworkKind.CELLULAR) return false
-        return candidates.any {
-            EndpointTransportPolicy.isHysteria(it) &&
-                !it.canaryOnly &&
-                EndpointSecurityPolicy.isAllowedCandidate(it) &&
-                it.code !in excludedCodes
-        }
     }
 
     private fun candidateSelectionComparator(

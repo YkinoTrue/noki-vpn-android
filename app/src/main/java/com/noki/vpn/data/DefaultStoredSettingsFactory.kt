@@ -39,7 +39,7 @@ object DefaultStoredSettingsFactory {
             profile = VlessProfile(),
             filterMode = AppFilterMode.ALL_EXCEPT_SELECTED,
             selectedPackages = defaultRussianDirectPackages,
-            userProfile = UserProfile(),
+            userProfile = UserProfile(serverSelectionMode = if (isFreshInstall) ServerSelectionMode.AUTO else ServerSelectionMode.COUNTRY),
             personalizationSettings = PersonalizationSettings(
                 language = AppLanguage.fromLocale(locale),
                 glassMode = if (isFreshInstall && sdkInt < FULL_GLASS_MIN_API_LEVEL) {

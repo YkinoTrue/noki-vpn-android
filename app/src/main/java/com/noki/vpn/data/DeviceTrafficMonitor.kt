@@ -16,7 +16,19 @@ import kotlinx.coroutines.launch
 data class DeviceTrafficSnapshot(
     val downloadMbps: Double? = null,
     val uploadMbps: Double? = null,
-)
+    val sessionBytes: Long? = null,
+    internal val sessionId: Long? = null,
+) {
+    internal fun forSession(id: Long): DeviceTrafficSnapshot =
+        if (sessionId == id) copy(downloadMbps = 0.0, uploadMbps = 0.0)
+        else DeviceTrafficSnapshot(0.0, 0.0, 0L, id)
+
+    internal fun withTraffic(rxDelta: Long, txDelta: Long, elapsedSeconds: Double): DeviceTrafficSnapshot = copy(
+        downloadMbps = rxDelta.coerceAtLeast(0L) * 8.0 / 1_000_000.0 / elapsedSeconds,
+        uploadMbps = txDelta.coerceAtLeast(0L) * 8.0 / 1_000_000.0 / elapsedSeconds,
+        sessionBytes = (sessionBytes ?: 0L) + rxDelta.coerceAtLeast(0L) + txDelta.coerceAtLeast(0L),
+    )
+}
 
 object DeviceTrafficMonitor {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -25,7 +37,7 @@ object DeviceTrafficMonitor {
 
     private var monitorJob: Job? = null
 
-    fun start() {
+    fun start(sessionId: Long) {
         if (monitorJob?.isActive == true) return
         monitorJob = scope.launch {
             val uid = Process.myUid()
@@ -40,7 +52,7 @@ object DeviceTrafficMonitor {
                 return@launch
             }
 
-            _snapshot.value = DeviceTrafficSnapshot(downloadMbps = 0.0, uploadMbps = 0.0)
+            _snapshot.value = _snapshot.value.forSession(sessionId)
 
             while (true) {
                 delay(1_000L)
@@ -58,10 +70,7 @@ object DeviceTrafficMonitor {
                 val elapsedSeconds = ((currentTimestamp - lastTimestamp).coerceAtLeast(1L)) / 1_000.0
                 val rxDelta = (currentRxBytes - lastRxBytes).coerceAtLeast(0L)
                 val txDelta = (currentTxBytes - lastTxBytes).coerceAtLeast(0L)
-                _snapshot.value = DeviceTrafficSnapshot(
-                    downloadMbps = rxDelta * 8.0 / 1_000_000.0 / elapsedSeconds,
-                    uploadMbps = txDelta * 8.0 / 1_000_000.0 / elapsedSeconds,
-                )
+                _snapshot.value = _snapshot.value.withTraffic(rxDelta, txDelta, elapsedSeconds)
 
                 lastRxBytes = currentRxBytes
                 lastTxBytes = currentTxBytes
@@ -73,6 +82,6 @@ object DeviceTrafficMonitor {
     fun stop() {
         monitorJob?.cancel()
         monitorJob = null
-        _snapshot.value = DeviceTrafficSnapshot()
+        _snapshot.value = _snapshot.value.copy(downloadMbps = null, uploadMbps = null)
     }
 }

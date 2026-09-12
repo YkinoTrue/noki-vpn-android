@@ -20,6 +20,23 @@ import org.junit.Test
 
 class SettingsMutationCoordinatorTest {
     @Test
+    fun nodeAndAutoSelectionInvalidateRuntimeWithoutErasingManualCountry() {
+        val latest = authenticatedSettings().copy(
+            userProfile = UserProfile(selectedCountryCode = "LV"),
+            profile = VlessProfile(uuid = "runtime", endpointCode = "old", serverName = "old-sni"),
+        )
+        val coordinator = SettingsMutationCoordinator(InMemoryAtomicStoredSettingsStore(latest))
+        val manual = coordinator.persistServerSelection("de", com.noki.vpn.data.ServerSelectionMode.SERVER, "node-a")
+        assertEquals("DE", manual.userProfile.selectedCountryCode)
+        assertEquals("node-a", manual.userProfile.selectedNodeId)
+        assertEquals("", manual.profile.serverName)
+        val automatic = coordinator.persistServerSelection("", com.noki.vpn.data.ServerSelectionMode.AUTO)
+        assertEquals("DE", automatic.userProfile.selectedCountryCode)
+        assertEquals("", automatic.userProfile.selectedNodeId)
+        assertEquals(com.noki.vpn.data.ServerSelectionMode.AUTO, automatic.userProfile.serverSelectionMode)
+    }
+
+    @Test
     fun profileChangingSettingsMutationsDeriveFromLatestProfile() {
         val latest = authenticatedSettings().copy(
             profile = VlessProfile(

@@ -7,4 +7,5 @@ internal data class UnderlyingNetworkSnapshot(
     val signature: String,
     val vpnShouldBeMetered: Boolean,
     val details: String,
+    val network: android.net.Network? = null,
 )

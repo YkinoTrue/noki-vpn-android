@@ -3,6 +3,8 @@ package com.noki.vpn
 import com.noki.vpn.data.AtomicStoredSettingsStore
 import com.noki.vpn.data.RuntimeProfilePolicy
 import com.noki.vpn.data.StoredSettings
+import com.noki.vpn.data.ServerSelectionMode
+import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.VpnEndpointOption
 import com.noki.vpn.data.VpnProtocol
 import java.util.Locale
@@ -35,19 +37,27 @@ internal class SettingsMutationCoordinator(
         effect = effect,
     )
 
-    fun persistServerSelection(countryCode: String): StoredSettings {
+    fun persistServerSelection(
+        countryCode: String,
+        mode: ServerSelectionMode = ServerSelectionMode.COUNTRY,
+        nodeId: String = "",
+    ): StoredSettings {
         val selectedCode = countryCode.trim().uppercase(Locale.ROOT)
         return store.updateSettings { latest ->
             latest.copy(
-                profile = RuntimeProfilePolicy.profileAfterLocationSelection(
-                    profile = latest.profile,
-                    selectedLocationCode = selectedCode,
-                    endpointOptions = latest.endpointOptions,
-                ),
+                profile = RuntimeProfilePolicy.profileAfterServerSelection(latest.profile),
                 endpointOptions = emptyList(),
+                advancedSettings = latest.advancedSettings.copy(
+                    endpointSelectionMode = EndpointSelectionMode.AUTO,
+                    manualEndpointCode = "",
+                    manualEndpointGroupKey = "",
+                ),
                 userProfile = latest.userProfile.copy(
-                    selectedCountryCode = selectedCode,
+                    selectedCountryCode = if (mode == ServerSelectionMode.AUTO) latest.userProfile.selectedCountryCode else selectedCode,
+                    serverSelectionMode = mode,
+                    selectedNodeId = if (mode == ServerSelectionMode.SERVER) nodeId.trim() else "",
                     selectedServerCode = "",
+                    actualCountryCode = "",
                 ),
             )
         }

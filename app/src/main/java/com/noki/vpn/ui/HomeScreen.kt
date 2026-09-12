@@ -1,9 +1,8 @@
 package com.noki.vpn.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.rememberScrollableState
-import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -42,6 +41,8 @@ import com.noki.vpn.MainViewModel
 import com.noki.vpn.R
 import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.VpnConnectionState
+import com.noki.vpn.data.ServerSelectionMode
+import com.noki.vpn.isCurrentServerSelection
 import com.noki.vpn.data.appRoutingModeLabel
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -63,7 +64,6 @@ fun HomeScreen(
     showBottomNavigation: Boolean = true,
 ) {
     CompositionLocalProvider(LocalTextStyle provides HomeNoFontPaddingTextStyle) {
-        val pullRefreshGestureState = rememberScrollableState { 0f }
         val destinationVisibility = LocalSharedDestinationVisibility.current
         val isSharedPrecomposing = destinationVisibility == SharedDestinationVisibility.Precomposing
         val liveWorkEnabled = destinationVisibility == SharedDestinationVisibility.FullyVisible
@@ -71,7 +71,6 @@ fun HomeScreen(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .scrollable(pullRefreshGestureState, Orientation.Vertical)
                 .then(if (showBackground) Modifier.background(HomeBgBase) else Modifier)
                 .statusBarsPadding(),
         ) {
@@ -80,15 +79,25 @@ fun HomeScreen(
             val scale = adaptiveMetrics.contentScale
             val screenMaxHeight = maxHeight
             val language = state.personalizationSettings.language
-            val selectedLocation = state.locations.firstOrNull { it.code == state.userProfile.selectedCountryCode }
-                ?: state.locations.firstOrNull()
+            val displayedCountryCode = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
+                state.userProfile.actualCountryCode
+            } else state.userProfile.selectedCountryCode
+            val selectedLocation = homeSelectedLocation(state.locations, state.userProfile)
+            val selectedServer = if (state.userProfile.serverSelectionMode == ServerSelectionMode.SERVER) {
+                selectedLocation?.servers?.firstOrNull { server ->
+                    server.id == state.userProfile.selectedNodeId ||
+                        server.locationCode.equals(state.userProfile.selectedServerCode, ignoreCase = true)
+                }
+            } else {
+                null
+            }
             val isConnected = state.connectionState == VpnConnectionState.CONNECTED ||
                 state.connectionState == VpnConnectionState.CONNECTING
             val deviceTraffic = rememberDeviceTrafficSnapshot(
                 connectionState = state.connectionState,
                 enabled = liveWorkEnabled,
             )
-            val metrics = currentMetrics(selectedLocation, state.connectionState, deviceTraffic)
+            val metrics = currentMetrics(selectedLocation, state.connectionState, deviceTraffic, state.activeLatencyMs)
             val autoEndpointSelection =
                 state.advancedSettings.endpointSelectionMode == EndpointSelectionMode.AUTO
             val connectionTimeLabel = rememberConnectionTimeLabel(
@@ -158,9 +167,15 @@ fun HomeScreen(
                 navigationBottomGap +
                 navigationHeight +
                 actionToNavigationGap
+            val minimumContentHeight = topGap + homeTopShift + locationHeight + sectionGap +
+                metricsHeight + designDp(24f, scale) +
+                designDp(NokiUiKitPolicy.homeQuickPillHeightDp * 2f + 8f + 17f, scale) +
+                actionHeight + bottomContentReserve
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .height(screenMaxHeight.coerceAtLeast(minimumContentHeight))
                     .then(
                         if (showBackground && backdrop != null) {
                             Modifier.layerBackdrop(backdrop)
@@ -279,15 +294,23 @@ fun HomeScreen(
                     scale = scale,
                     language = language,
                     locations = state.locations,
-                    selectedServerCode = state.userProfile.selectedCountryCode,
+                    selectedServerCode = selectedLocation?.code ?: displayedCountryCode,
                     expanded = isServerMenuExpanded,
                     onToggle = {
                         isServerMenuExpanded = !isServerMenuExpanded
+                        if (isServerMenuExpanded) viewModel.refreshServerStats()
                     },
                     backdrop = backdrop,
                     liveGlassEnabled = effectiveLiveGlassEnabled,
-                    country = selectedLocation?.let { localizedServerCountry(it, language) }
+                    country = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
+                        tr(language, "Автовыбор", "Automatic")
+                    } else selectedLocation?.let { localizedServerCountry(it, language) }
                         ?: tr(language, "Нет сервера", "No server"),
+                    subtitle = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
+                        selectedLocation?.let { localizedServerCountry(it, language) }
+                    } else if (state.userProfile.serverSelectionMode == ServerSelectionMode.SERVER) {
+                        selectedServer?.name
+                    } else null,
                 )
             }
 
@@ -346,15 +369,13 @@ fun HomeScreen(
                     onCollapse = {
                         isServerMenuExpanded = false
                     },
-                    onLocationSelected = { code ->
+                    userProfile = state.userProfile,
+                    onLocationSelected = { code, mode ->
                         val selectedCode = code.trim()
-                        if (
-                            selectedCode.isBlank() ||
-                            selectedCode == state.userProfile.selectedCountryCode.trim()
-                        ) {
+                        if (isCurrentServerSelection(state.userProfile, selectedCode, mode)) {
                             isServerMenuExpanded = false
                         } else {
-                            viewModel.requestServerChange(selectedCode)
+                            viewModel.requestServerChange(selectedCode, mode)
                         }
                     },
                 )
@@ -362,10 +383,13 @@ fun HomeScreen(
 
             (state.dialog as? AppDialog.ChangeServer)?.let { dialog ->
                 val code = dialog.locationCode
-                val serverName = state.locations
-                    .firstOrNull { it.code == code }
-                    ?.let { localizedServerCountry(it, language) }
-                    ?: code
+                val serverName = when (dialog.mode) {
+                    ServerSelectionMode.AUTO -> tr(language, "Автовыбор", "Automatic")
+                    ServerSelectionMode.COUNTRY -> state.locations.firstOrNull { it.code.equals(code, true) }
+                        ?.let { localizedServerCountry(it, language) } ?: code
+                    ServerSelectionMode.SERVER -> state.locations.flatMap { it.servers }
+                        .firstOrNull { it.id == code }?.name ?: tr(language, "Сервер недоступен", "Server unavailable")
+                }
                 val message = if (state.connectionState == VpnConnectionState.DISCONNECTED) {
                     tr(
                         language,

@@ -44,6 +44,7 @@ internal fun PersonalizationLanguageRow(
     liveGlassEnabled: Boolean,
     modifier: Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     PersonalizationPanelSurface(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
@@ -55,15 +56,15 @@ internal fun PersonalizationLanguageRow(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = metrics.dp(20f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                    .padding(end = metrics.dp(12f)),
+                verticalArrangement = Arrangement.spacedBy(metrics.dp(3f)),
             ) {
                 PersonalizationText(
                     text = tr(language, "Язык приложения", "App language"),
@@ -96,13 +97,14 @@ internal fun PersonalizationLanguageToggle(
     selectedLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Row(
         modifier = Modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(24.dp))
+            .height(metrics.dp(34f))
+            .clip(RoundedCornerShape(metrics.dp(24f)))
             .background(PersonalizationBgSoft.copy(alpha = 0.72f))
-            .border(BorderStroke(1.dp, PersonalizationStroke.copy(alpha = 0.82f)), RoundedCornerShape(24.dp))
-            .padding(3.dp),
+            .border(BorderStroke(1.dp, PersonalizationStroke.copy(alpha = 0.82f)), RoundedCornerShape(metrics.dp(24f)))
+            .padding(metrics.dp(3f)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PersonalizationLanguageChip(
@@ -110,7 +112,7 @@ internal fun PersonalizationLanguageToggle(
             selected = selectedLanguage == AppLanguage.RU,
             onClick = { onLanguageChanged(AppLanguage.RU) },
         )
-        Spacer(modifier = Modifier.width(4.dp))
+        Spacer(modifier = Modifier.width(metrics.dp(4f)))
         PersonalizationLanguageChip(
             text = "EN",
             selected = selectedLanguage == AppLanguage.EN,
@@ -125,12 +127,13 @@ internal fun PersonalizationLanguageChip(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
-            .width(42.dp)
+            .width(metrics.dp(42f))
             .fillMaxHeight()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(metrics.dp(24f)))
             .background(
                 if (selected) PersonalizationAccent.copy(alpha = 0.24f) else Color.Transparent,
             )
@@ -166,6 +169,7 @@ internal fun PersonalizationGlassModeRow(
     liveGlassEnabled: Boolean,
     modifier: Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     PersonalizationPanelSurface(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
@@ -174,7 +178,7 @@ internal fun PersonalizationGlassModeRow(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = metrics.dp(20f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -186,11 +190,12 @@ internal fun PersonalizationGlassModeRow(
                 modifier = Modifier.weight(1f),
             )
             NokiLiquidToggle(
+                sizeFactor = metrics.contentScale,
                 selected = fullGlassEnabled(glassMode),
                 onSelectedChange = { onGlassModeChanged(glassModeForFullGlassEnabled(it)) },
                 backdrop = backdrop,
                 liveGlassEnabled = liveGlassEnabled,
-                modifier = Modifier.padding(start = 14.dp),
+                modifier = Modifier.padding(start = metrics.dp(14f)),
             )
         }
     }

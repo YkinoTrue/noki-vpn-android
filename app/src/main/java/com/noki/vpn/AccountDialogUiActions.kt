@@ -1,20 +1,18 @@
 package com.noki.vpn
 
 import com.noki.vpn.data.ServerLocation
+import com.noki.vpn.data.ServerSelectionMode
 import kotlinx.coroutines.launch
 
 internal fun AppUiRuntime.requestLogout() {
     uiState = uiState.copy(dialog = AppDialog.Logout)
 }
 
-internal fun AppUiRuntime.requestServerChange(locationCode: String) {
-    locationCode.trim().takeIf { code ->
-        code.isNotBlank() &&
-            code != uiState.userProfile.selectedCountryCode.trim() &&
-            uiState.locations.any { it.code.trim() == code }
-    }?.let { code ->
-        uiState = uiState.copy(dialog = AppDialog.ChangeServer(code), inlineMessage = null)
-    }
+internal fun AppUiRuntime.requestServerChange(locationCode: String, mode: ServerSelectionMode = ServerSelectionMode.COUNTRY) {
+    val dialog = AppDialog.ChangeServer(locationCode.trim(), mode)
+    if (isCurrentServerSelection(uiState.userProfile, dialog.locationCode, mode)) return
+    if (confirmedServerCode(dialog, uiState.locations) == null) return
+    uiState = uiState.copy(dialog = dialog, inlineMessage = null)
 }
 
 internal fun AppUiRuntime.requestAppFilterReset() {
@@ -25,7 +23,13 @@ internal fun confirmedServerCode(
     dialog: AppDialog.ChangeServer,
     locations: List<ServerLocation>,
 ): String? = dialog.locationCode.trim().takeIf { code ->
-    code.isNotBlank() && locations.any { it.code.trim() == code }
+    when (dialog.mode) {
+        ServerSelectionMode.AUTO -> locations.any { it.isOnline }
+        ServerSelectionMode.COUNTRY -> code.isNotBlank() && locations.any { it.code.equals(code, true) && it.isOnline }
+        ServerSelectionMode.SERVER -> code.isNotBlank() && locations.any { location ->
+            location.servers.any { it.id == code && it.isOnline }
+        }
+    }
 }
 
 internal fun AppUiRuntime.requestAccountDeletion() {
@@ -61,7 +65,7 @@ internal fun AppUiRuntime.confirmDialog() {
         AppDialog.AccessDenied -> dismissDialog()
         AppDialog.FreeTrafficLimitReached -> {
             uiState = uiState.copy(dialog = null, inlineMessage = null)
-            openScreen(AppDestination.SETTINGS)
+            openScreen(AppDestination.PLANS)
         }
         AppDialog.DeviceLimitReached -> {
             uiState = uiState.copy(dialog = null, inlineMessage = null)
@@ -79,7 +83,7 @@ internal fun AppUiRuntime.confirmDialog() {
         is AppDialog.ChangeServer -> {
             val selectedCode = confirmedServerCode(dialog, uiState.locations)
             uiState = uiState.copy(dialog = null, inlineMessage = null)
-            selectedCode?.let(::selectServer)
+            selectedCode?.let { selectServer(it, dialog.mode) }
         }
         is AppDialog.DeleteAccount -> confirmAccountDeletion(dialog)
         is AppDialog.UnlinkTelegram -> confirmTelegramUnlink(dialog)

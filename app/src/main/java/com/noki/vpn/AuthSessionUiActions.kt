@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 internal fun AppUiRuntime.logout() {
     val notificationHistorySettings = repository.load()
     accountSecurityUiWorkflow.invalidate()
+    paymentCheckoutWorkflow.invalidate()
     telegramLoginGateway.cancel()
     telegramAuthPurposeState.invalidate()
     vpnCommands.stop()
@@ -24,6 +25,7 @@ internal fun AppUiRuntime.logout() {
     val staleClientLatencyRefresh = clientLatencyRefreshJob
     clientLatencyRefreshJob = null
     clientLatencyRefreshTarget = null
+    clientLatencyRefreshNetworkSignature = null
     clientLatencyByTarget = emptyMap()
     lastServerStatsRefreshElapsedMs = 0L
     staleClientLatencyRefresh?.cancel()

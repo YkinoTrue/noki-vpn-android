@@ -54,13 +54,14 @@ internal fun AppSearchField(
     backdrop: LayerBackdrop?,
     liveGlassEnabled: Boolean,
 ) {
-    val shape = RoundedCornerShape(13.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(13f))
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(metrics.dp(44f))
             .nokiGlassSurface(
                 shape = shape,
                 backdrop = backdrop,
@@ -71,13 +72,13 @@ internal fun AppSearchField(
                 contrast = 1.06f,
                 brightness = 0.05f,
             )
-            .padding(start = 17.dp, end = 14.dp),
+            .padding(start = metrics.dp(17f), end = metrics.dp(14f)),
         singleLine = true,
         cursorBrush = SolidColor(AppFilterAccentPrimary),
         textStyle = TextStyle(
             color = AppFilterTextPrimary,
-            fontSize = 12.sp,
-            lineHeight = 14.4.sp,
+            fontSize = metrics.sp(12f),
+            lineHeight = metrics.sp(14.4f),
             fontFamily = ManropeFontFamily,
             fontWeight = FontWeight.Normal,
             platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -85,14 +86,14 @@ internal fun AppSearchField(
         decorationBox = { innerTextField ->
             Row(
                 modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(metrics.dp(8f)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Search,
                     contentDescription = null,
                     tint = AppFilterTextSecondary.copy(alpha = 0.7f),
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(metrics.dp(16f)),
                 )
                 Box(
                     modifier = Modifier.weight(1f),
@@ -122,11 +123,12 @@ internal fun AppFilterRow(
     liveGlassEnabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(19.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(19f))
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .height(metrics.dp(52f))
             .nokiGlassSurface(
                 shape = shape,
                 backdrop = backdrop,
@@ -138,11 +140,11 @@ internal fun AppFilterRow(
                 brightness = 0.05f,
             )
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 26.dp),
+            .padding(start = metrics.dp(14f), end = metrics.dp(26f)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIcon(packageName = app.packageName, appName = app.appName)
-        Spacer(modifier = Modifier.width(15.dp))
+        Spacer(modifier = Modifier.width(metrics.dp(15f)))
         AppFilterText(
             text = app.appName,
             fontSize = 13.5f,
@@ -161,9 +163,10 @@ internal fun AppIcon(
     packageName: String,
     appName: String,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val context = LocalContext.current
     val density = LocalDensity.current
-    val iconSize = 36.dp
+    val iconSize = metrics.dp(36f)
     val iconSizePx = with(density) { iconSize.roundToPx() }
     val icon = remember(packageName, iconSizePx) {
         runCatching {
@@ -173,7 +176,7 @@ internal fun AppIcon(
                 .asImageBitmap()
         }.getOrNull()
     }
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(metrics.dp(12f))
     Box(
         modifier = Modifier
             .size(iconSize)
@@ -205,10 +208,11 @@ internal fun AppIcon(
 internal fun SelectionIndicator(
     selected: Boolean,
 ) {
-    val shape = RoundedCornerShape(6.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(6f))
     Box(
         modifier = Modifier
-            .size(22.dp)
+            .size(metrics.dp(22f))
             .clip(shape)
             .background(AppFilterBgLighter, shape)
             .border(BorderStroke(1.dp, AppFilterStroke), shape),
@@ -219,7 +223,7 @@ internal fun SelectionIndicator(
                 imageVector = Icons.Rounded.Check,
                 contentDescription = null,
                 tint = AppFilterAccentPrimary,
-                modifier = Modifier.size(15.dp),
+                modifier = Modifier.size(metrics.dp(15f)),
             )
         }
     }
@@ -233,11 +237,12 @@ internal fun AppSystemAppsToggle(
     liveGlassEnabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val shape = RoundedCornerShape(13.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(13f))
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(metrics.dp(44f))
             .nokiGlassSurface(
                 shape = shape,
                 backdrop = backdrop,
@@ -248,7 +253,7 @@ internal fun AppSystemAppsToggle(
                 contrast = 1.06f,
                 brightness = 0.05f,
             )
-            .padding(start = 17.dp, end = 14.dp),
+            .padding(start = metrics.dp(17f), end = metrics.dp(14f)),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -260,9 +265,10 @@ internal fun AppSystemAppsToggle(
             maxLines = 1,
             modifier = Modifier
                 .weight(1f)
-                .padding(end = 12.dp),
+                .padding(end = metrics.dp(12f)),
         )
         NokiLiquidToggle(
+            sizeFactor = metrics.contentScale,
             selected = checked,
             onSelectedChange = onCheckedChange,
             backdrop = backdrop,
@@ -279,7 +285,8 @@ internal fun AppFilterApplyButton(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(18f))
     Box(
         modifier = modifier
             .nokiGlassSurface(
@@ -317,7 +324,8 @@ internal fun AppFilterResetButton(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(18f))
     Box(
         modifier = modifier
             .nokiGlassSurface(
@@ -340,7 +348,7 @@ internal fun AppFilterResetButton(
             imageVector = Icons.Rounded.Close,
             contentDescription = description,
             tint = AppFilterDanger,
-            modifier = Modifier.size(26.dp),
+            modifier = Modifier.size(metrics.dp(26f)),
         )
     }
 }
@@ -349,10 +357,11 @@ internal fun AppFilterResetButton(
 internal fun AppFilterEmptyState(
     text: String,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height(metrics.dp(52f)),
         contentAlignment = Alignment.Center,
     ) {
         AppFilterText(
