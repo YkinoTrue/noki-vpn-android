@@ -3,6 +3,13 @@ package com.noki.vpn.vpn
 import android.os.Looper
 import com.noki.vpn.data.AtomicStoredSettingsStore
 import com.noki.vpn.data.BackendVpnSession
+import com.noki.vpn.data.BackendDevice
+import com.noki.vpn.data.EndpointSelector
+import com.noki.vpn.data.SettingsRepository
+import com.noki.vpn.data.VpnStartCoordinator
+import com.noki.vpn.data.EndpointSelectionMode
+import com.noki.vpn.data.hysteriaCandidate
+import com.noki.vpn.data.tcpCandidate
 import com.noki.vpn.data.DefaultStoredSettingsFactory
 import com.noki.vpn.data.EndpointRankingPolicy
 import com.noki.vpn.data.StoredSettings
@@ -11,6 +18,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
+import org.json.JSONObject
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.Key
@@ -39,6 +49,61 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [28])
 @LooperMode(LooperMode.Mode.PAUSED)
 class AppVpnServiceCommandTest {
+    @Test
+    fun failedRuntimeCandidatesReachHysteriaWithinOneStart() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true)
+        fixture.startPrepared()
+
+        assertEquals(setOf("tcp1", "tcp2", "tcp3", "tcp4", "hy2"), fixture.startedEndpoints.toSet())
+        assertEquals(5, fixture.startedEndpoints.size)
+        assertEquals("hy2", fixture.startedEndpoints.last())
+        assertEquals(VpnConnectionState.CONNECTED, fixture.orchestrator.currentState())
+        assertEquals("hy2", fixture.orchestrator.currentSettings()?.profile?.endpointCode)
+        assertEquals("hy2", fixture.savedSettings().profile.endpointCode)
+        assertEquals(1, fixture.tunnelsCreated)
+    }
+
+    @Test
+    fun failedAutoStartExhaustsCandidatesOnceBeforeReportingFailure() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = null)
+        fixture.startPrepared()
+
+        assertEquals(setOf("tcp1", "tcp2", "tcp3", "tcp4", "hy2"), fixture.startedEndpoints.toSet())
+        assertEquals(5, fixture.startedEndpoints.size)
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        assertNull(fixture.orchestrator.currentTunnel())
+        assertFalse(fixture.savedSettings().profile.endpointCode == "hy2")
+    }
+
+    @Test
+    fun manualStartDoesNotSwitchToAnotherEngineAfterRuntimeFailure() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true)
+        fixture.startPrepared(mode = EndpointSelectionMode.MANUAL)
+
+        assertEquals(listOf("tcp1"), fixture.startedEndpoints)
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+    }
+
+    @Test
+    fun successfulFirstCandidateDoesNotStartFallbacks() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = "tcp1")
+        fixture.startPrepared()
+
+        assertEquals(listOf("tcp1"), fixture.startedEndpoints)
+        assertEquals(VpnConnectionState.CONNECTED, fixture.orchestrator.currentState())
+    }
+
+    @Test
+    fun invalidatedStartDoesNotTryAnotherCandidate() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true)
+        fixture.onProbe = { fixture.orchestrator.invalidate() }
+        fixture.startPrepared()
+
+        assertEquals(listOf("tcp1"), fixture.startedEndpoints)
+        assertNull(fixture.orchestrator.currentTunnel())
+        assertNull(fixture.orchestrator.currentSettings())
+    }
+
     @Before
     fun provideInMemoryAndroidKeyStore() {
         Security.addProvider(object : Provider("NokiVpnCommandTest", 1.0, "Test-only Android keystore") {
@@ -140,8 +205,15 @@ class AppVpnServiceCommandTest {
         }
     }
 
-    private class Fixture(scope: CoroutineScope) {
+    private class Fixture(
+        scope: CoroutineScope,
+        private val probeFallback: Boolean = false,
+        private val workingEndpoint: String? = "hy2",
+    ) {
         val service = Robolectric.buildService(AppVpnService::class.java).get()
+        val startedEndpoints = mutableListOf<String>()
+        var tunnelsCreated = 0
+        var onProbe: () -> Unit = {}
         private val store = object : AtomicStoredSettingsStore {
             private var value = DefaultStoredSettingsFactory.create()
             override fun load(): StoredSettings = value
@@ -151,15 +223,32 @@ class AppVpnServiceCommandTest {
         private val scheduler = HandlerDelayedTaskScheduler(android.os.Handler(Looper.getMainLooper()))
         val orchestrator = VpnConnectionOrchestrator(
             xray = object : XrayRuntime {
-                override fun start(config: String, tunFd: Int): Boolean = error("unexpected native start")
+                override fun start(config: String, tunFd: Int): Boolean {
+                    check(probeFallback)
+                    val outbound = JSONObject(config).getJSONArray("outbounds").getJSONObject(0)
+                    val protocol = outbound.getString("protocol")
+                    startedEndpoints += if (protocol == "hysteria") "hy2" else {
+                        outbound.getJSONObject("settings").getJSONArray("vnext")
+                            .getJSONObject(0).getString("address").substringBefore('.')
+                    }
+                    return true
+                }
                 override fun stop() = Unit
                 override fun cancelMeasureDelay() = Unit
-                override fun measureDelay(targetUrl: String, timeoutMillis: Long): XrayProbeResult =
-                    error("unexpected native probe")
+                override fun measureDelay(targetUrl: String, timeoutMillis: Long): XrayProbeResult {
+                    onProbe()
+                    return XrayProbeResult(delayMs = if (startedEndpoints.last() == workingEndpoint) 30L else null)
+                }
             },
             tunFactory = object : TunInterfaceFactory {
-                override fun establish(settings: StoredSettings, underlay: UnderlyingNetworkSnapshot?): TunHandle? =
-                    error("unexpected tunnel creation")
+                override fun establish(settings: StoredSettings, underlay: UnderlyingNetworkSnapshot?): TunHandle {
+                    check(probeFallback)
+                    tunnelsCreated++
+                    return object : TunHandle {
+                        override val fd = 7
+                        override fun close() = Unit
+                    }
+                }
             },
             preparer = VpnConnectionPreparer(
                 store = store,
@@ -179,6 +268,16 @@ class AppVpnServiceCommandTest {
             set("delayedTaskScheduler", scheduler)
             set("warmupController", VpnWarmupController<BackendVpnSession>(scheduler, 1L))
             set("statsCoordinator", VpnStatsCoordinator(service, scope, scheduler, { null }, { _, _ -> }))
+            set("isXrayRuntimeAvailable", { true })
+            set("underlyingNetworkSource", AndroidUnderlyingNetworkSource(service))
+            set("notificationFactory", VpnNotificationFactory(service))
+            set("settingsCommitCoordinator", VpnSettingsCommitCoordinator(store))
+            set("networkMonitor", VpnNetworkMonitor(
+                source = { error("unexpected network callback") },
+                scheduler = scheduler,
+                debounceMillis = 1L,
+                register = { null },
+            ))
             orchestrator.updateState(VpnConnectionState.CONNECTED)
             orchestrator.replaceTunnel(object : TunHandle {
                 override val fd = 7
@@ -187,6 +286,49 @@ class AppVpnServiceCommandTest {
         }
 
         fun startAccount() = invoke("startVpn", true, false)
+
+        fun savedSettings(): StoredSettings = store.load()
+
+        suspend fun startPrepared(mode: EndpointSelectionMode = EndpointSelectionMode.AUTO) {
+            val candidates = (1..4).map { tcpCandidate("tcp$it") } + hysteriaCandidate("hy2")
+            val session = BackendVpnSession(
+                canConnect = true, profileCode = "auto", locationCode = "lv1", locationName = "Latvia",
+                endpointCode = "tcp1", entryHost = "tcp1.example.com", entryPort = 443,
+                serverName = "www.lu.lv", proxyType = "vless", transport = "tcp", transportMode = null,
+                security = "reality", fingerprint = "chrome", requestHost = null, path = null, alpn = null,
+                allowInsecure = false, enableMux = false, randomUserAgent = false,
+                publicKey = "public", shortId = "short", vpnUsername = "test",
+                vpnSecret = "e912e725-2dc7-4b44-85d2-7fbc31a48b5e", flow = "xtls-rprx-vision",
+                planCode = null, endpointCandidates = candidates,
+            )
+            val baseline = store.load()
+            val profile = EndpointSelector.profileFromCandidate(session, candidates.first())
+            val settings = baseline.copy(
+                profile = profile,
+                userProfile = baseline.userProfile.copy(selectedServerCode = "lv1"),
+                endpointOptions = EndpointSelector.optionsFromSession(session),
+                advancedSettings = baseline.advancedSettings.copy(endpointSelectionMode = mode),
+            )
+            val prepared = PreparedVpnSession(
+                baseline, settings, EndpointRankingPolicy.NetworkKind.CELLULAR,
+                VpnStartCoordinator.Result(
+                    settings, session,
+                    BackendDevice(id = "device", deviceKey = "key", deviceName = "Phone",
+                        platform = "android", accessRole = "owner", isActive = true, lastSeenAt = null),
+                    EndpointSelector.EndpointSelectionResult(profile, profile.endpointCode, ""), emptyList(),
+                ),
+            )
+            orchestrator.replaceTunnel(null)
+            orchestrator.updateState(VpnConnectionState.CONNECTING)
+            val generation = orchestrator.beginTransition()
+            suspendCoroutineUninterceptedOrReturn<Unit> { continuation ->
+                val method = AppVpnService::class.java.declaredMethods.single { it.name == "startTunnel" }
+                    .apply { isAccessible = true }
+                val result = method.invoke(service, SettingsRepository(service), settings, baseline,
+                    prepared, generation, VpnRuntimeMode.ACCOUNT, true, continuation)
+                if (result === COROUTINE_SUSPENDED) COROUTINE_SUSPENDED else Unit
+            }
+        }
         fun stop(startId: Int) = invoke("stopVpn", startId, false)
 
         fun pendingStart(): Any? = AppVpnService::class.java.getDeclaredField("pendingStartOptions")

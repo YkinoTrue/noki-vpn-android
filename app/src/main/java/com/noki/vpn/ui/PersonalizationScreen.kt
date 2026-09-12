@@ -102,7 +102,7 @@ fun PersonalizationScreen(
         val language = state.personalizationSettings.language
         val preparedProfile = state.settingsPreparedState
         val avatarEditingEnabled = !preparedProfile.isInvitedDevice
-        val headerToFirstBlockGap = metrics.dp(3f) + metrics.dp(14.4f) + 20.dp
+        val headerToFirstBlockGap = metrics.dp(3f) + metrics.dp(14.4f) + metrics.dp(20f)
 
         Box(
             modifier = Modifier
@@ -124,8 +124,8 @@ fun PersonalizationScreen(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .statusBarsPadding()
-                    .padding(horizontal = 21.dp)
-                    .padding(top = 58.dp, bottom = 150.dp),
+                    .padding(horizontal = metrics.contentStart)
+                    .padding(top = metrics.dp(58f), bottom = metrics.dp(150f)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 PersonalizationText(
@@ -134,16 +134,16 @@ fun PersonalizationScreen(
                     lineHeight = 28.8f,
                     fontWeight = FontWeight.Normal,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .padding(start = 18.dp, end = 18.dp),
+                        .padding(start = metrics.dp(18f), end = metrics.dp(18f)),
                 )
 
                 Spacer(modifier = Modifier.height(headerToFirstBlockGap))
 
                 Column(
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
                 ) {
                     PersonalizationAvatarBlock(
@@ -163,9 +163,9 @@ fun PersonalizationScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(PersonalizationAvatarLayoutPolicy.avatarSizeDp.dp),
+                            .height(metrics.dp(PersonalizationAvatarLayoutPolicy.avatarSizeDp)),
                     )
-                    Spacer(modifier = Modifier.height(PersonalizationAvatarLayoutPolicy.avatarToSettingsGapDp.dp))
+                    Spacer(modifier = Modifier.height(metrics.dp(PersonalizationAvatarLayoutPolicy.avatarToSettingsGapDp)))
                     PersonalizationLanguageRow(
                         language = language,
                         onLanguageChanged = onLanguageChanged,
@@ -173,9 +173,9 @@ fun PersonalizationScreen(
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(80.dp),
+                            .height(metrics.dp(80f)),
                     )
-                    Spacer(modifier = Modifier.height(15.dp))
+                    Spacer(modifier = Modifier.height(metrics.dp(15f)))
                     PersonalizationGlassModeRow(
                         glassMode = state.personalizationSettings.glassMode,
                         onGlassModeChanged = onGlassModeChanged,
@@ -183,7 +183,7 @@ fun PersonalizationScreen(
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(80.dp),
+                            .height(metrics.dp(80f)),
                     )
                 }
             }

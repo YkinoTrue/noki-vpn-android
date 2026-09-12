@@ -9,9 +9,23 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
+import android.content.Context
+import com.noki.vpn.vpn.AndroidUnderlyingNetworkSource
 
 internal fun clientLatencyTargetKey(location: ServerLocation): String? =
     clientLatencyTargetKey(location.code, location.host)
+
+internal fun clientLatencyTargetKey(server: VpnServer): String? =
+    clientLatencyTargetKey(server.id, "${server.host}:${server.probePort ?: 0}")
+
+internal fun ServerLocation.withClientLatencies(samples: Map<String, Int>): ServerLocation {
+    val measured = servers.map { server -> server.copy(latencyMs = clientLatencyTargetKey(server)?.let(samples::get)) }
+    return copy(
+        servers = measured,
+        latencyMs = if (measured.isNotEmpty()) measured.filter { it.isOnline }.mapNotNull { it.latencyMs }.minOrNull()
+            else clientLatencyTargetKey(this)?.let(samples::get),
+    )
+}
 
 internal fun clientLatencyTargetKey(codeValue: String, hostValue: String): String? {
     val code = codeValue.trim().uppercase(Locale.ROOT)
@@ -24,21 +38,39 @@ class ClientLatencySampler(
     private val tcpConnect: (host: String, port: Int, timeoutMs: Int) -> Int? = DeviceLatency::measureTcpConnectMs,
     private val icmpPing: (host: String, count: Int, timeoutSeconds: Int) -> Int? = DeviceLatency::measureIcmpPingMs,
     private val locationTimeoutMillis: Long = 8_000L,
+    private val context: Context? = null,
 ) {
+    fun networkSignature(): String = context?.let { AndroidUnderlyingNetworkSource(it).currentSnapshot()?.signature } ?: "none"
+
     suspend fun measure(locations: List<ServerLocation>): Map<String, Int> = coroutineScope {
+        val network = context?.let { AndroidUnderlyingNetworkSource(it).currentSnapshot()?.network }
+        if (context != null && network == null) return@coroutineScope emptyMap()
         val probeSlots = Semaphore(DeviceLatency.MAX_CONCURRENT_DNS_LOOKUPS)
         locations
             .asSequence()
             .filter { location -> location.isOnline }
-            .mapNotNull { location ->
-                val targetKey = clientLatencyTargetKey(location) ?: return@mapNotNull null
-                val host = location.host.trim()
+            .flatMap { location ->
+                if (location.servers.isEmpty()) sequenceOf(Triple(clientLatencyTargetKey(location), location.host, 443))
+                else location.servers.asSequence().filter { it.isOnline }.map { Triple(clientLatencyTargetKey(it), it.host, it.probePort) }
+            }
+            .distinctBy { it.first }
+            .mapNotNull { (key, rawHost, port) ->
+                val targetKey = key ?: return@mapNotNull null
+                val host = rawHost.trim()
                 async {
                     val latency = withTimeoutOrNull(locationTimeoutMillis.coerceAtLeast(1L)) {
                         probeSlots.withPermit {
                             runInterruptible(Dispatchers.IO) {
-                                tcpConnectMedian(host)
-                                    ?: icmpPing(host, LATENCY_ICMP_COUNT, LATENCY_ICMP_TIMEOUT_SECONDS)
+                                if (port == null) null else {
+                                    val samples = List(LATENCY_TCP_ATTEMPTS) {
+                                        if (network == null) tcpConnect(host, port, LATENCY_TCP_TIMEOUT_MS)
+                                        else DeviceLatency.measureTcpConnectMs(host, port, LATENCY_TCP_TIMEOUT_MS,
+                                            onDiagnostic = {}, socketFactory = { network.socketFactory.createSocket() },
+                                            lookup = network::getAllByName)
+                                    }.filterNotNull().sorted()
+                                    samples.getOrNull(samples.size / 2)
+                                        ?: if (context == null) icmpPing(host, LATENCY_ICMP_COUNT, LATENCY_ICMP_TIMEOUT_SECONDS) else null
+                                }
                             }
                         }
                     }
@@ -51,16 +83,7 @@ class ClientLatencySampler(
             .toMap()
     }
 
-    private fun tcpConnectMedian(host: String): Int? {
-        val samples = List(LATENCY_TCP_ATTEMPTS) {
-            tcpConnect(host, LATENCY_TCP_PORT, LATENCY_TCP_TIMEOUT_MS)
-        }.filterNotNull().sorted()
-        if (samples.isEmpty()) return null
-        return samples[samples.size / 2]
-    }
-
     private companion object {
-        const val LATENCY_TCP_PORT = 443
         const val LATENCY_TCP_ATTEMPTS = 3
         const val LATENCY_TCP_TIMEOUT_MS = 650
         const val LATENCY_ICMP_COUNT = 1

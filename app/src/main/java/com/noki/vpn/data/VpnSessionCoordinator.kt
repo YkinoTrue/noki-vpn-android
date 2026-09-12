@@ -33,6 +33,7 @@ class VpnSessionCoordinator(
     ) -> EndpointSelector.EndpointSelectionResult)? = null,
     private val onDiagnostic: (String) -> Unit = {},
 ) {
+    private var sessionApi: VpnSessionApi = backendApi
     data class Result(
         val settings: StoredSettings,
         val session: BackendVpnSession,
@@ -56,6 +57,54 @@ class VpnSessionCoordinator(
         sessionSelection: VpnSessionSelection = VpnSessionSelection(
             countryCode = settings.userProfile.selectedCountryCode,
         ),
+    ): Result = withContext(Dispatchers.IO) {
+        val network = context?.let { com.noki.vpn.vpn.AndroidUnderlyingNetworkSource(it).currentSnapshot()?.network }
+        sessionApi = if (backendApi is BackendApiClient && network != null) backendApi.onNetwork(network) else backendApi
+        val catalog = backendStep("server_catalog") {
+            sessionApi.serverLocations(token, settings.backendDeviceId.ifBlank { null }, settings.backendDeviceKey.ifBlank { null })
+        }
+        val locations = BootstrapStateMapper.mapLocations(catalog, settings.personalizationSettings.language, emptyMap())
+        val samples = if (context == null) emptyMap() else ClientLatencySampler(context = context).measure(locations)
+        val scope = settings.userProfile.let { profile ->
+            when {
+                sessionSelection.nodeId != null -> profile.copy(serverSelectionMode = ServerSelectionMode.SERVER, selectedNodeId = sessionSelection.nodeId)
+                profile.serverSelectionMode == ServerSelectionMode.COUNTRY -> profile.copy(selectedCountryCode = sessionSelection.countryCode)
+                else -> profile
+            }
+        }
+        val nodes = EndpointRankingPolicy.rankServers(
+            locations.flatMap { it.withClientLatencies(samples).servers }.filter {
+                it.id !in sessionSelection.excludedNodeIds &&
+                    (sessionSelection.locationCode == null || it.locationCode == sessionSelection.locationCode) &&
+                    it.locationCode != sessionSelection.excludeLocationCode
+            }, scope,
+        )
+        if (nodes.isEmpty()) throw BackendException("No available servers", 503)
+        var lastFailure: Exception = BackendException("No available servers", 503)
+        for (node in nodes) {
+            try {
+                val result = prepareAtNode(token, settings, knownDevices, sessionSelection.copy(
+                    countryCode = node.countryCode, locationCode = node.locationCode, nodeId = node.id,
+                ))
+                if (!VpnProfileValidator.isUsable(result.settings) && node != nodes.last()) continue
+                return@withContext result.copy(settings = result.settings.copy(userProfile = result.settings.userProfile.copy(actualCountryCode = node.countryCode)))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: BackendException) {
+                if (error.statusCode !in setOf(404, 503)) throw error
+                lastFailure = error
+            } catch (error: UnusableFreshProfileException) {
+                lastFailure = error
+            }
+        }
+        throw lastFailure
+    }
+
+    private suspend fun prepareAtNode(
+        token: String,
+        settings: StoredSettings,
+        knownDevices: List<BackendDevice>,
+        sessionSelection: VpnSessionSelection,
     ): Result = withContext(Dispatchers.IO) {
         val deviceSession = createDeviceSession(
             token = token,
@@ -119,22 +168,21 @@ class VpnSessionCoordinator(
         settings: StoredSettings,
         knownDevices: List<BackendDevice> = emptyList(),
     ): EndpointOptionsResult = withContext(Dispatchers.IO) {
-        val deviceSession = createDeviceSession(
+        val prepared = prepare(
             token = token,
             settings = settings,
             knownDevices = knownDevices,
-            profileCode = VpnProtocol.AUTO.name.lowercase(Locale.ROOT),
             sessionSelection = VpnSessionSelection(
                 countryCode = settings.userProfile.selectedCountryCode,
             ),
         )
         EndpointOptionsResult(
-            session = deviceSession.session,
-            endpointOptions = EndpointSelector.optionsFromSession(deviceSession.session),
-            currentDevice = deviceSession.currentDevice,
-            backendDeviceKey = deviceSession.currentDevice.deviceKey,
-            backendDeviceId = deviceSession.currentDevice.id,
-            backendDeviceAccessRole = deviceSession.accessRole,
+            session = prepared.session,
+            endpointOptions = EndpointSelector.optionsFromSession(prepared.session),
+            currentDevice = prepared.currentDevice,
+            backendDeviceKey = prepared.currentDevice.deviceKey,
+            backendDeviceId = prepared.currentDevice.id,
+            backendDeviceAccessRole = prepared.settings.backendDeviceAccessRole,
         )
     }
 
@@ -155,7 +203,7 @@ class VpnSessionCoordinator(
         var deviceId = settings.backendDeviceId
         var accessRole = settings.backendDeviceAccessRole.ifBlank { "owner" }
 
-        val access = backendStep("access") { backendApi.vpnAccess(
+        val access = backendStep("access") { sessionApi.vpnAccess(
             token = token,
             deviceId = deviceId.ifBlank { null },
             deviceKey = safeDeviceKey,
@@ -181,49 +229,28 @@ class VpnSessionCoordinator(
         }
 
         val challenge = try {
-            backendStep("device_challenge") { backendApi.createDeviceChallenge(token, currentDevice.id) }
+            backendStep("device_challenge") { sessionApi.createDeviceChallenge(token, currentDevice.id) }
         } catch (error: BackendException) {
             if (error.statusCode !in RECOVERABLE_DEVICE_STATUS_CODES) throw error
             currentDevice = registerDevice(token, safeDeviceKey, null)
-            backendStep("device_challenge") { backendApi.createDeviceChallenge(token, currentDevice.id) }
+            backendStep("device_challenge") { sessionApi.createDeviceChallenge(token, currentDevice.id) }
         }
         deviceId = currentDevice.id
         accessRole = currentDevice.accessRole.ifBlank { accessRole }
 
-        val countryCode = sessionSelection.countryCode.trim().takeIf { it.length >= 2 }
-        val explicitLocationCode = sessionSelection.locationCode?.trim()?.takeIf { it.isNotEmpty() }
-        val legacyLocationCode = settings.userProfile.selectedServerCode
-            .trim()
-            .lowercase(Locale.ROOT)
-            .takeIf { it.isNotEmpty() }
-        val requestSession: suspend (String?, String?) -> BackendVpnSession = { requestedCountry, requestedLocation ->
-            val signature = backendStep("challenge_sign") { challengeSigner(challenge.nonce) }
-            backendStep("session_create") { backendApi.createVpnSession(
+        val signature = backendStep("challenge_sign") { challengeSigner(challenge.nonce) }
+        val session = backendStep("session_create") { sessionApi.createVpnSession(
                 token = token,
                 deviceId = deviceId,
                 deviceKey = currentDevice.deviceKey,
                 deviceNonce = challenge.nonce,
                 deviceSignature = signature,
-                countryCode = requestedCountry,
-                locationCode = requestedLocation,
+                countryCode = sessionSelection.countryCode,
+                locationCode = sessionSelection.locationCode,
                 excludeLocationCode = sessionSelection.excludeLocationCode,
                 profileCode = profileCode,
-            ) }
-        }
-        val session = try {
-            requestSession(
-                countryCode,
-                explicitLocationCode ?: legacyLocationCode.takeIf { countryCode == null },
-            )
-        } catch (error: BackendException) {
-            val legacyBackend = countryCode != null &&
-                explicitLocationCode == null &&
-                legacyLocationCode != null &&
-                error.statusCode == 503 &&
-                error.message.equals("Location not found", ignoreCase = true)
-            if (!legacyBackend) throw error
-            requestSession(null, legacyLocationCode)
-        }
+                nodeId = sessionSelection.nodeId,
+        ) }
         if (!session.canConnect) {
             throw BackendException("vpn_access_denied", 403)
         }
@@ -239,7 +266,7 @@ class VpnSessionCoordinator(
         deviceKey: String,
         deviceId: String?,
     ): BackendDevice {
-        return backendStep("device_register") { backendApi.registerDevice(
+        return backendStep("device_register") { sessionApi.registerDevice(
             token = token,
             deviceKey = deviceKey,
             deviceId = deviceId,
@@ -274,6 +301,7 @@ class VpnSessionCoordinator(
     }
 
     private fun defaultStartupTcpPrecheck(candidate: BackendEndpointCandidate): Boolean {
+        val network = context?.let { com.noki.vpn.vpn.AndroidUnderlyingNetworkSource(it).currentSnapshot()?.network }
         return DeviceLatency.measureTcpConnectMs(
             rawHost = candidate.connectionHost(),
             port = candidate.entryPort,
@@ -281,6 +309,8 @@ class VpnSessionCoordinator(
             onDiagnostic = { result ->
                 onDiagnostic("stage=tcp_precheck; endpoint=${candidate.code}; target=${candidate.connectionHost().take(255)}; port=${candidate.entryPort}; timeout_ms=$startupTcpPrecheckTimeoutMs; $result")
             },
+            socketFactory = { network?.socketFactory?.createSocket() ?: java.net.Socket() },
+            lookup = { host -> network?.getAllByName(host) ?: java.net.InetAddress.getAllByName(host) },
         ) != null
     }
 

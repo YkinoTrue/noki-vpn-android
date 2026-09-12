@@ -23,7 +23,7 @@ object DeviceLatency {
     internal const val MAX_CONCURRENT_DNS_LOOKUPS = 4
 
     fun measureTcpConnectMs(rawHost: String, port: Int, timeoutMs: Int = 1800): Int? {
-        return measureTcpConnectMs(rawHost, port, timeoutMs) {}
+        return measureTcpConnectMs(rawHost, port, timeoutMs, onDiagnostic = {})
     }
 
     internal fun measureTcpConnectMs(
@@ -31,6 +31,8 @@ object DeviceLatency {
         port: Int,
         timeoutMs: Int,
         onDiagnostic: (String) -> Unit,
+        socketFactory: () -> Socket = ::Socket,
+        lookup: (String) -> Array<InetAddress> = InetAddress::getAllByName,
     ): Int? {
         val started = System.nanoTime()
         fun report(result: String) = onDiagnostic(
@@ -40,12 +42,12 @@ object DeviceLatency {
         val safePort = port.coerceIn(1, 65535)
         val safeTimeout = timeoutMs.coerceIn(250, 5000)
         var dnsFailure = "dns_no_address"
-        val address = resolveAddress(host, safeTimeout, onFailure = { dnsFailure = it })
+        val address = resolveAddress(host, safeTimeout, onFailure = { dnsFailure = it }, lookup = lookup)
             ?: run { report(dnsFailure); return null }
         val resolutionMs = (System.nanoTime() - started) / 1_000_000L
         if (resolutionMs >= safeTimeout) { report("dns_timeout"); return null }
         return try {
-            Socket().use { socket ->
+            socketFactory().use { socket ->
                 socket.connect(
                     InetSocketAddress(address, safePort),
                     (safeTimeout - resolutionMs).toInt().coerceAtLeast(1),

@@ -45,7 +45,8 @@ internal fun AdvancedPanelSurface(
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {
-    val shape = RoundedCornerShape(24.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(24f))
     Box(
         modifier = modifier
             .nokiSettingsPanelGlassSurface(
@@ -53,7 +54,7 @@ internal fun AdvancedPanelSurface(
                 backdrop = backdrop,
                 exportedBackdrop = exportedBackdrop,
                 liveGlassEnabled = liveGlassEnabled,
-                scale = 1f,
+                scale = metrics.contentScale,
                 elevationDp = 8f,
                 shadowAlpha = 0.25f,
                 brightness = cardBrightness,
@@ -77,6 +78,7 @@ internal fun AdvancedSmallButton(
     glassEnabled: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -110,7 +112,7 @@ internal fun AdvancedSmallButton(
                             scaleY = pressScale
                         }
                         .shadow(
-                            elevation = 8.dp,
+                            elevation = metrics.dp(8f),
                             shape = shape,
                             ambientColor = Color.Black.copy(alpha = 0.28f),
                             spotColor = Color.Black.copy(alpha = 0.28f),

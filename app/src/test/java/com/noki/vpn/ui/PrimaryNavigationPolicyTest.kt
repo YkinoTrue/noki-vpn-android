@@ -16,6 +16,24 @@ import org.junit.Test
 
 class PrimaryNavigationPolicyTest {
     @Test
+    fun selectionModeIsPartOfIdentityAndOfflineNodeCannotBeConfirmed() {
+        val profile = com.noki.vpn.data.UserProfile(selectedCountryCode = "DE")
+        assertEquals(true, com.noki.vpn.isCurrentServerSelection(profile, "de", com.noki.vpn.data.ServerSelectionMode.COUNTRY))
+        assertEquals(false, com.noki.vpn.isCurrentServerSelection(profile, "", com.noki.vpn.data.ServerSelectionMode.AUTO))
+        val node = com.noki.vpn.data.VpnServer(
+            id = "node-a", name = "Frankfurt 1", countryCode = "DE", locationCode = "de-1",
+            host = "probe.example", probePort = 443, isOnline = false,
+        )
+        val locations = listOf(ServerLocation(code = "DE", country = "Germany", city = "", host = "", isOnline = true, servers = listOf(node)))
+        assertNull(confirmedServerCode(AppDialog.ChangeServer("node-a", com.noki.vpn.data.ServerSelectionMode.SERVER), locations))
+        assertEquals("", confirmedServerCode(AppDialog.ChangeServer("", com.noki.vpn.data.ServerSelectionMode.AUTO), locations))
+        assertEquals("node-a", confirmedServerCode(
+            AppDialog.ChangeServer("node-a", com.noki.vpn.data.ServerSelectionMode.SERVER),
+            locations.map { it.copy(servers = listOf(node.copy(isOnline = true))) },
+        ))
+    }
+
+    @Test
     fun devicesPullRefreshLoadsBothNativeAndIncyDataWithoutProbingLatency() {
         val requests = mutableListOf<String>()
 

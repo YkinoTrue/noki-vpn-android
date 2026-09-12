@@ -26,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -60,6 +61,7 @@ fun InviteDeviceScreen(
     viewModel: MainViewModel,
     liveGlassEnabled: Boolean = true,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val language = state.personalizationSettings.language
     val form = state.inviteDeviceForm
     var mode by rememberSaveable { mutableStateOf(InviteInputMode.Code) }
@@ -85,14 +87,16 @@ fun InviteDeviceScreen(
             modifier = Modifier
                 .align(Alignment.Center)
                 .fillMaxWidth()
-                .padding(horizontal = 21.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = metrics.contentStart),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(14f)),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = tr(language, "Подключить устройство", "Connect device"),
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.headlineSmall,
+                fontSize = metrics.sp(24f),
+                lineHeight = metrics.sp(29f),
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
             )
@@ -104,9 +108,11 @@ fun InviteDeviceScreen(
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
+                fontSize = metrics.sp(14f),
+                lineHeight = metrics.sp(20f),
                 textAlign = TextAlign.Center,
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(metrics.dp(4f)))
             InviteModeSelector(
                 mode = mode,
                 enabled = !form.isLoading,
@@ -128,7 +134,7 @@ fun InviteDeviceScreen(
                     loading = form.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
+                        .height(metrics.dp(56f)),
                     backdrop = authBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     onClick = viewModel::acceptDeviceInvite,
@@ -141,7 +147,7 @@ fun InviteDeviceScreen(
                     enabled = !form.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
+                        .height(metrics.dp(56f)),
                     backdrop = authBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     onClick = { viewModel.openScreen(AppDestination.INVITE_QR_SCANNER) },
@@ -153,7 +159,7 @@ fun InviteDeviceScreen(
                 enabled = !form.isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(42.dp),
+                    .height(metrics.dp(42f)),
                 backdrop = authBackdrop,
                 liveGlassEnabled = liveGlassEnabled,
                 onClick = { viewModel.openScreen(AppDestination.LOGIN) },
@@ -163,6 +169,8 @@ fun InviteDeviceScreen(
                     text = form.error,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
+                fontSize = metrics.sp(12f),
+                lineHeight = metrics.sp(16f),
                     textAlign = TextAlign.Center,
                 )
             }
@@ -178,7 +186,8 @@ private fun InviteCodeInputField(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    val shape = RoundedCornerShape(20.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(20f))
     var textFieldValue by remember {
         mutableStateOf(
             TextFieldValue(
@@ -247,10 +256,10 @@ private fun InviteCodeInputField(
             }
         },
         modifier = modifier
-            .height(56.dp)
+            .height(metrics.dp(56f))
             .background(Color(0xFF0D1B2A), shape)
             .border(1.dp, Color(0xFF29404E), shape)
-            .padding(horizontal = 19.dp),
+            .padding(horizontal = metrics.dp(19f)),
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Text,
@@ -259,11 +268,11 @@ private fun InviteCodeInputField(
         cursorBrush = SolidColor(Color(0xFF42D6A4)),
         textStyle = TextStyle(
             color = Color(0xFFF4FBFF),
-            fontSize = 14.sp,
-            lineHeight = 12.sp,
+            fontSize = metrics.sp(14f),
+            lineHeight = metrics.sp(12f),
             fontFamily = ManropeFontFamily,
             fontWeight = FontWeight.Normal,
-            letterSpacing = 0.14.sp,
+            letterSpacing = metrics.sp(0.14f),
             platformStyle = PlatformTextStyle(includeFontPadding = false),
         ),
         decorationBox = { innerTextField ->
@@ -275,11 +284,11 @@ private fun InviteCodeInputField(
                     Text(
                         text = placeholder,
                         color = Color(0xFF6E8797),
-                        fontSize = 14.sp,
-                        lineHeight = 12.sp,
+                        fontSize = metrics.sp(14f),
+                        lineHeight = metrics.sp(12f),
                         fontFamily = ManropeFontFamily,
                         fontWeight = FontWeight.Normal,
-                        letterSpacing = 0.14.sp,
+                        letterSpacing = metrics.sp(0.14f),
                         maxLines = 1,
                         overflow = TextOverflow.Clip,
                     )
@@ -298,7 +307,11 @@ private fun InviteModeSelector(
     liveGlassEnabled: Boolean,
     onModeChanged: (InviteInputMode) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     GlassSegmentedControl(
+        labelFontSize = metrics.sp(14f),
+        labelLineHeight = metrics.sp(17f),
+        capsulePadding = metrics.dp(5f),
         labels = listOf(
             tr(language, "Ввести код", "Enter code"),
             tr(language, "QR-код", "QR code"),
@@ -318,10 +331,10 @@ private fun InviteModeSelector(
         },
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp),
+            .height(metrics.dp(60f)),
         activeBlur = 0.dp,
-        lensRefractionHeight = 24.dp,
-        lensRefractionAmount = 24.dp,
+        lensRefractionHeight = metrics.dp(24f),
+        lensRefractionAmount = metrics.dp(24f),
         maxPressedScaleX = 1.1f,
         liveGlassEnabled = liveGlassEnabled,
         depthEffectEnabled = true,
@@ -330,13 +343,14 @@ private fun InviteModeSelector(
 
 @Composable
 private fun QrInviteHint(language: com.noki.vpn.data.AppLanguage) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(104.dp)
-            .background(Color(0xFF0D1B2A), RoundedCornerShape(20.dp))
-            .border(BorderStroke(1.dp, Color(0xFF29404E)), RoundedCornerShape(20.dp))
-            .padding(18.dp),
+            .height(metrics.dp(104f))
+            .background(Color(0xFF0D1B2A), RoundedCornerShape(metrics.dp(20f)))
+            .border(BorderStroke(1.dp, Color(0xFF29404E)), RoundedCornerShape(metrics.dp(20f)))
+            .padding(metrics.dp(18f)),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -347,6 +361,8 @@ private fun QrInviteHint(language: com.noki.vpn.data.AppLanguage) {
             ),
             color = Color(0xFF9FB6C5),
             style = MaterialTheme.typography.bodyMedium,
+                fontSize = metrics.sp(14f),
+                lineHeight = metrics.sp(20f),
             textAlign = TextAlign.Center,
         )
     }

@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -57,6 +58,7 @@ internal fun SecurityAndroidVersionBlock(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val update = updateState.update
     val isBusy = updateState.isChecking || updateState.isDownloading
     val currentVersion = updateState.currentVersionName.ifBlank { "unknown" }
@@ -74,21 +76,21 @@ internal fun SecurityAndroidVersionBlock(
     )
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(metrics.dp(10f)),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 8.dp),
+                .heightIn(min = metrics.dp(48f))
+                .padding(horizontal = metrics.dp(8f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                    .padding(end = metrics.dp(12f)),
+                verticalArrangement = Arrangement.spacedBy(metrics.dp(5f)),
             ) {
                 SecurityText(
                     text = title,
@@ -111,9 +113,9 @@ internal fun SecurityAndroidVersionBlock(
             }
             if (isBusy && update == null) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(metrics.dp(24f)),
                     color = SecurityAccent,
-                    strokeWidth = 2.dp,
+                    strokeWidth = metrics.dp(2f),
                     trackColor = SecurityStroke.copy(alpha = 0.42f),
                 )
             }
@@ -132,7 +134,7 @@ internal fun SecurityAndroidVersionBlock(
                 accentGradientFill = true,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp),
+                    .height(metrics.dp(60f)),
                 onClick = onClick,
             )
         }
@@ -208,6 +210,7 @@ internal fun SecurityTelegramLinkedRow(
     modifier: Modifier,
     onDeleteClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     SecurityPanelSurface(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
@@ -228,18 +231,18 @@ internal fun SecurityTelegramLinkedRow(
                 maxLines = 1,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 20.dp, end = 12.dp),
+                    .padding(start = metrics.dp(20f), end = metrics.dp(12f)),
             )
             Box(
                 modifier = Modifier
                     .width(1.dp)
-                    .height(34.dp)
+                    .height(metrics.dp(34f))
                     .clip(RoundedCornerShape(percent = 50))
                     .background(SecurityStroke.copy(alpha = 0.9f)),
             )
             Box(
                 modifier = Modifier
-                    .width(58.dp)
+                    .width(metrics.dp(58f))
                     .fillMaxSize()
                     .semantics {
                         role = Role.Button
@@ -256,7 +259,7 @@ internal fun SecurityTelegramLinkedRow(
                     imageVector = Icons.Outlined.LinkOff,
                     contentDescription = null,
                     tint = NokiError,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(metrics.dp(24f)),
                 )
             }
         }
@@ -277,6 +280,7 @@ internal fun SecurityGlassActionButton(
     surfaceStyle: SecurityActionSurfaceStyle = SecurityActionSurfaceStyle.Action,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -286,7 +290,7 @@ internal fun SecurityGlassActionButton(
     )
     val clickAnimator = rememberAuthButtonClickAnimator()
     val resolvedScale = if (animateBeforeClick) clickAnimator.scale.value else pressScale
-    val shape = RoundedCornerShape(24.dp)
+    val shape = RoundedCornerShape(metrics.dp(24f))
     Box(
         modifier = modifier
             .graphicsLayer {
@@ -310,7 +314,7 @@ internal fun SecurityGlassActionButton(
                         shape = shape,
                         backdrop = backdrop,
                         liveGlassEnabled = liveGlassEnabled,
-                        scale = 1f,
+                        scale = metrics.contentScale,
                         elevationDp = 8f,
                         shadowAlpha = 0.25f,
                         surfaceColor = SecurityBgLighter.copy(alpha = 0.80f),
@@ -358,9 +362,9 @@ internal fun SecurityGlassActionButton(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = metrics.dp(20f)),
             horizontalArrangement = Arrangement.spacedBy(
-                if (icon != SecurityActionIcon.None) 15.dp else 10.dp,
+                if (icon != SecurityActionIcon.None) metrics.dp(15f) else metrics.dp(10f),
             ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -368,12 +372,12 @@ internal fun SecurityGlassActionButton(
                 SecurityActionIcon.Email -> Image(
                     painter = painterResource(R.drawable.security_email_icon),
                     contentDescription = null,
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(metrics.dp(21f)),
                 )
 
-                SecurityActionIcon.Password -> SecurityPasswordIcon(modifier = Modifier.size(21.dp))
+                SecurityActionIcon.Password -> SecurityPasswordIcon(modifier = Modifier.size(metrics.dp(21f)))
                 SecurityActionIcon.Profile -> Box(
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(metrics.dp(21f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     FigmaSvgAsset(
@@ -381,25 +385,25 @@ internal fun SecurityGlassActionButton(
                         viewportWidth = 27,
                         viewportHeight = 30,
                         modifier = Modifier
-                            .width(19.dp)
-                            .height(21.dp),
+                            .width(metrics.dp(19f))
+                            .height(metrics.dp(21f)),
                     )
                 }
 
-                SecurityActionIcon.Terms -> SecurityTermsIcon(modifier = Modifier.size(21.dp))
+                SecurityActionIcon.Terms -> SecurityTermsIcon(modifier = Modifier.size(metrics.dp(21f)))
                 SecurityActionIcon.Telegram -> Icon(
                     painter = painterResource(R.drawable.login_telegram_icon),
                     contentDescription = null,
                     tint = Color.White,
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(metrics.dp(21f)),
                 )
                 SecurityActionIcon.None -> Unit
             }
             if (showProgress) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(metrics.dp(18f)),
                     color = SecurityAccent,
-                    strokeWidth = 2.dp,
+                    strokeWidth = metrics.dp(2f),
                     trackColor = SecurityStroke.copy(alpha = 0.42f),
                 )
             }

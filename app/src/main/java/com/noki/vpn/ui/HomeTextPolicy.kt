@@ -30,14 +30,14 @@ internal data class HomeMetricsSnapshot(
     val download: String?,
     val upload: String?,
     val latency: String?,
-    val load: String?,
+    val sessionBytes: Long?,
 )
 
 internal enum class HomeMetricIcon {
     Upload,
     Download,
     Latency,
-    Load,
+    Traffic,
 }
 
 internal data class HomeMetricRowUi(
@@ -50,4 +50,5 @@ internal data class HomeMetricRowUi(
 internal data class HomeDeviceTrafficSnapshot(
     val downloadMbps: String? = null,
     val uploadMbps: String? = null,
+    val sessionBytes: Long? = null,
 )

@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -81,6 +82,7 @@ fun AvatarCropScreen(
         rotationQuarterTurns: Int,
     ) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val context = LocalContext.current
     val density = LocalDensity.current
     val preview by produceState<AvatarPreviewState>(initialValue = AvatarPreviewState.Loading, sourceUri) {
@@ -110,14 +112,14 @@ fun AvatarCropScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .padding(horizontal = 18.dp),
+            .padding(horizontal = metrics.dp(18f)),
         contentAlignment = Alignment.Center,
     ) {
         val previewWidth = maxWidth
-        val availablePreviewHeight = (maxHeight - 230.dp).coerceAtLeast(1.dp)
+        val availablePreviewHeight = (maxHeight - metrics.dp(230f)).coerceAtLeast(1.dp)
         val previewHeight = when {
-            availablePreviewHeight < 360.dp -> availablePreviewHeight
-            availablePreviewHeight > 590.dp -> 590.dp
+            availablePreviewHeight < metrics.dp(360f) -> availablePreviewHeight
+            availablePreviewHeight > metrics.dp(590f) -> metrics.dp(590f)
             else -> availablePreviewHeight
         }
         val cropCircleSize = minOf(previewWidth, previewHeight) * 0.78f
@@ -147,7 +149,7 @@ fun AvatarCropScreen(
             Box(
                 modifier = Modifier
                     .size(width = previewWidth, height = previewHeight)
-                    .clip(RoundedCornerShape(2.dp))
+                    .clip(RoundedCornerShape(metrics.dp(2f)))
                     .background(Color.Black)
                     .pointerInput(bitmap, previewWidthPx, previewHeightPx, cropCircleSizePx, rotationQuarterTurns, isUploading) {
                         detectTransformGestures { _, pan, zoom, _ ->
@@ -186,7 +188,7 @@ fun AvatarCropScreen(
                 }
             }
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = metrics.dp(12f)),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 AvatarCropRotationButton(
@@ -202,18 +204,18 @@ fun AvatarCropScreen(
                     onClick = { rotate(1) },
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(metrics.dp(16f)))
             message?.takeIf { it.isNotBlank() }?.let {
                 AvatarCropText(
                     text = it,
                     color = Color(0xFFB5C6D2),
                     fontSize = 12f,
                     lineHeight = 15f,
-                    modifier = Modifier.padding(bottom = 12.dp),
+                    modifier = Modifier.padding(bottom = metrics.dp(12f)),
                 )
             }
             Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(metrics.dp(14f)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 AvatarCropActionButton(
@@ -254,6 +256,7 @@ private fun AvatarCropCanvas(
     crop: AvatarCropRequest,
     modifier: Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG) }
     Canvas(modifier = modifier) {
         val matrix = crop.imageMatrix(image.width, image.height)
@@ -279,7 +282,7 @@ private fun AvatarCropCanvas(
         drawPath(
             path = circlePath,
             color = Color(0xCCF4FBFF),
-            style = Stroke(width = 2.dp.toPx()),
+            style = Stroke(width = metrics.dp(2f).toPx()),
         )
     }
 }
@@ -291,10 +294,11 @@ private fun AvatarCropRotationButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(48.dp).nokiSettingsActionGlassSurface(
+        modifier = Modifier.size(metrics.dp(48f)).nokiSettingsActionGlassSurface(
             shape = CircleShape,
             backdrop = null,
             liveGlassEnabled = false,
@@ -304,7 +308,7 @@ private fun AvatarCropRotationButton(
             imageVector = icon,
             contentDescription = description,
             tint = SettingsTextPrimary.copy(alpha = if (enabled) 1f else 0.4f),
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(metrics.dp(24f)),
         )
     }
 }
@@ -316,11 +320,12 @@ private fun AvatarCropActionButton(
     onClick: () -> Unit,
     primary: Boolean = false,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val background = if (primary) Color(0xFF75E7C3) else Color(0xFF132635)
     val content = if (primary) Color(0xFF07111A) else Color(0xFFF4FBFF)
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(metrics.dp(18f)))
             .background(if (enabled) background else background.copy(alpha = 0.35f))
             .clickable(
                 enabled = enabled,
@@ -328,7 +333,7 @@ private fun AvatarCropActionButton(
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onClick,
             )
-            .padding(horizontal = 26.dp, vertical = 14.dp),
+            .padding(horizontal = metrics.dp(26f), vertical = metrics.dp(14f)),
         contentAlignment = Alignment.Center,
     ) {
         AvatarCropText(
@@ -351,11 +356,12 @@ private fun AvatarCropText(
     fontWeight: FontWeight = FontWeight.Normal,
     textAlign: TextAlign = TextAlign.Center,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Text(
         text = text,
         color = color,
-        fontSize = fontSize.sp,
-        lineHeight = lineHeight.sp,
+        fontSize = metrics.sp(fontSize),
+        lineHeight = metrics.sp(lineHeight),
         fontWeight = fontWeight,
         textAlign = textAlign,
         style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),

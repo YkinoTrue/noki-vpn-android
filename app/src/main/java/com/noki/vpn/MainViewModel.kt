@@ -44,6 +44,16 @@ class MainViewModel(
 
     fun refreshAndroidUpdateStatus() = runtime.refreshAndroidUpdateStatus()
 
+    fun preparePaymentCheckout() = runtime.paymentCheckoutWorkflow.prepare()
+    fun selectPaymentMethod(code: String) = runtime.paymentCheckoutWorkflow.selectMethod(code)
+    fun createPayment(planCode: String) = runtime.paymentCheckoutWorkflow.submit(planCode)
+    fun refreshPaymentStatus() = runtime.paymentCheckoutWorkflow.refreshStatus()
+    fun stopPaymentStatusChecks() = runtime.paymentCheckoutWorkflow.stopChecking()
+    fun reopenPayment() = runtime.paymentCheckoutWorkflow.reopen()
+    fun consumePaymentUrl() = runtime.paymentCheckoutWorkflow.consumeLaunchUrl()
+    fun paymentBrowserFailed() = runtime.paymentCheckoutWorkflow.browserFailed()
+    fun dismissPaymentResult() = runtime.paymentCheckoutWorkflow.dismissResult()
+
     fun installAndroidUpdate() = runtime.installAndroidUpdate()
 
     fun showCurrentDeviceAccessDenied() = runtime.showCurrentDeviceAccessDenied()
@@ -175,7 +185,7 @@ class MainViewModel(
 
     fun setBillingCycle(cycle: BillingCycle) = runtime.setBillingCycle(cycle)
 
-    fun selectServer(code: String) = runtime.selectServer(code)
+    fun selectServer(code: String, mode: com.noki.vpn.data.ServerSelectionMode = com.noki.vpn.data.ServerSelectionMode.COUNTRY) = runtime.selectServer(code, mode)
 
     fun refreshServers() = runtime.refreshServers()
 
@@ -277,7 +287,7 @@ class MainViewModel(
 
     fun requestLogout() = runtime.requestLogout()
 
-    fun requestServerChange(locationCode: String) = runtime.requestServerChange(locationCode)
+    fun requestServerChange(locationCode: String, mode: com.noki.vpn.data.ServerSelectionMode = com.noki.vpn.data.ServerSelectionMode.COUNTRY) = runtime.requestServerChange(locationCode, mode)
 
     fun requestAppFilterReset() = runtime.requestAppFilterReset()
 

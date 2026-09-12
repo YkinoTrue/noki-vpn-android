@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -32,12 +34,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import com.noki.vpn.AppDialog
 import com.noki.vpn.AppUiState
 import com.noki.vpn.MainViewModel
+import com.noki.vpn.R
 import com.noki.vpn.data.AppLanguage
 import com.noki.vpn.data.DeviceSession
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -154,14 +158,27 @@ fun DevicesScreen(
                                     language = language,
                                     scale = scale,
                                 )
-                                CurrentDeviceCard(
-                                    device = currentDevice,
-                                    language = language,
-                                    backdrop = cardBackdrop,
-                                    liveGlassEnabled = liveGlassEnabled,
-                                    scale = scale,
-                                    onRenameClick = { currentDevice?.id?.let(viewModel::requestRenameDevice) },
-                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(devicesDp(10f, scale)),
+                                ) {
+                                    DevicesText(
+                                        text = tr(language, "Текущее устройство", "Current device"),
+                                        fontSize = 12f,
+                                        lineHeight = 14.4f,
+                                        color = DevicesTextSecondary,
+                                        scale = scale,
+                                        modifier = Modifier.padding(horizontal = devicesDp(18f, scale)),
+                                    )
+                                    CurrentDeviceCard(
+                                        device = currentDevice,
+                                        language = language,
+                                        backdrop = cardBackdrop,
+                                        liveGlassEnabled = liveGlassEnabled,
+                                        scale = scale,
+                                        onRenameClick = { currentDevice?.id?.let(viewModel::requestRenameDevice) },
+                                    )
+                                }
                             }
                             RemoveAllDevicesButton(
                                 language = language,
@@ -364,7 +381,7 @@ private fun CurrentDeviceCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(devicesDp(110f, scale))
+            .height(devicesDp(80f, scale))
             .then(
                 if (!isActive) {
                     Modifier
@@ -391,21 +408,6 @@ private fun CurrentDeviceCard(
             .padding(horizontal = devicesDp(20f, scale)),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(devicesDp(77f, scale)),
-            verticalArrangement = Arrangement.spacedBy(devicesDp(15f, scale), Alignment.CenterVertically),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            DevicesText(
-                text = tr(language, "Текущее устройство", "Current device"),
-                fontSize = 12f,
-                lineHeight = 14.4f,
-                color = DevicesTextSecondary,
-                scale = scale,
-                modifier = Modifier,
-            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(devicesDp(15f, scale)),
@@ -422,15 +424,12 @@ private fun CurrentDeviceCard(
                     scale = scale,
                     modifier = Modifier.weight(1f),
                 )
-                DevicesText(
-                    text = tr(language, "Переименовать", "Rename"),
-                    fontSize = 11f,
-                    lineHeight = 13f,
-                    color = DevicesAccentPrimary,
-                    scale = scale,
-                    modifier = Modifier,
+                Icon(
+                    painter = painterResource(R.drawable.personalization_avatar_edit_icon),
+                    contentDescription = tr(language, "Переименовать", "Rename"),
+                    tint = DevicesTextPrimary,
+                    modifier = Modifier.size(devicesDp(16f, scale)),
                 )
             }
-        }
     }
 }

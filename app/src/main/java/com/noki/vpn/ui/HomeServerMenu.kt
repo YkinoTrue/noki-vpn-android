@@ -14,25 +14,39 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.GraphicsLayerScope
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -120,17 +134,22 @@ internal fun HomeDropdownArrowButton(
 
 @Composable
 internal fun HomeServerMenuItem(
-    location: ServerLocation,
+    location: ServerLocation?,
     language: AppLanguage,
     scale: Float,
-    backdrop: LayerBackdrop?,
-    liveGlassEnabled: Boolean,
     animateOnlineIndicator: Boolean,
     onClick: () -> Unit,
+    title: String? = null,
+    selected: Boolean = false,
+    latencyMs: Int? = location?.latencyMs,
+    online: Boolean = location?.isOnline ?: true,
+    expanded: Boolean = false,
+    onExpand: (() -> Unit)? = null,
 ) {
-    val countryText = localizedServerCountry(location, language)
-    val loadText = location.loadPercent?.let { "$it %" } ?: "-- %"
-    val latencyText = location.latencyMs?.let { "$it ms" } ?: "-- ms"
+    val isServerRow = location != null && title != null
+    val countryText = title ?: location?.let { localizedServerCountry(it, language) }.orEmpty()
+    val latencyText = latencyMs?.let { "$it " + tr(language, "мс", "ms") } ?: "—"
+    val markerSize = if (isServerRow) 32f else 46f
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -141,87 +160,108 @@ internal fun HomeServerMenuItem(
         ),
         label = "homeServerMenuItemPress",
     )
-    val shape = RoundedCornerShape(settingsDp(20f, 1f))
-    Box(
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "countryServersArrow",
+    )
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(designDp(NokiUiKitPolicy.homeServerItemHeightDp, scale))
-            .homeServerItemGlassSurface(
-                shape = shape,
-                backdrop = backdrop,
-                liveGlassEnabled = liveGlassEnabled,
-                scale = scale,
-                layerBlock = {
-                    scaleX = pressScale
-                    scaleY = pressScale
-                },
-            )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = designDp(NokiUiKitPolicy.homeServerItemHorizontalPaddingDp, scale)),
+                .weight(1f)
+                .heightIn(min = designDp(if (isServerRow) 68f else NokiUiKitPolicy.homeServerItemHeightDp, scale))
+                .semantics { this.selected = selected }
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    enabled = online,
+                    role = Role.RadioButton,
+                    onClick = onClick,
+                )
+                .padding(start = designDp(18f, scale), end = designDp(if (onExpand == null) 18f else 0f, scale))
+                .padding(vertical = designDp(12f, scale)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CountryFlagMarker(
-                location = location,
-                scale = scale,
-                sizeDp = NokiUiKitPolicy.homeServerItemFlagSizeDp,
-            )
-            Spacer(modifier = Modifier.width(designDp(15f, scale)))
-            Text(
-                text = countryText.ifBlank { location.code.uppercase(Locale.ROOT) },
-                color = HomeTextPrimary,
-                fontFamily = ManropeFontFamily,
-                fontWeight = FontWeight.Normal,
-                fontSize = designSp(NokiUiKitPolicy.homeServerItemNameTextSp, scale),
-                letterSpacing = 0.sp,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+            if (location != null && !isServerRow) {
+                CountryFlagMarker(location = location, scale = scale, sizeDp = markerSize)
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(designDp(markerSize, scale))
+                        .clip(RoundedCornerShape(designDp(14f, scale)))
+                        .background(if (isServerRow) Color.Transparent else HomeAccentPrimary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (isServerRow) Icons.Rounded.Dns else Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = if (isServerRow && !selected) HomeTextSecondary else HomeAccentPrimary,
+                        modifier = Modifier.size(designDp(if (isServerRow) 21f else 24f, scale)),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(designDp(14f, scale)))
+            Column(
                 modifier = Modifier.weight(1f),
-            )
-            Spacer(modifier = Modifier.width(designDp(12f, scale)))
-            Text(
-                text = loadText,
-                color = HomeTextSecondary,
-                fontFamily = ManropeFontFamily,
-                fontWeight = FontWeight.Normal,
-                fontSize = designSp(NokiUiKitPolicy.homeServerItemMetricTextSp, scale),
-                letterSpacing = 0.sp,
-                maxLines = 1,
-                softWrap = false,
-                textAlign = TextAlign.Right,
-                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
-            )
-            Spacer(modifier = Modifier.width(designDp(8f, scale)))
-            Text(
-                text = latencyText,
-                color = HomeTextSecondary,
-                fontFamily = ManropeFontFamily,
-                fontWeight = FontWeight.Normal,
-                fontSize = designSp(NokiUiKitPolicy.homeServerItemMetricTextSp, scale),
-                letterSpacing = 0.sp,
-                maxLines = 1,
-                softWrap = false,
-                textAlign = TextAlign.Right,
-                style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
-            )
-            Spacer(modifier = Modifier.width(designDp(9f, scale)))
+                verticalArrangement = Arrangement.spacedBy(designDp(4f, scale)),
+            ) {
+                Text(
+                    text = countryText,
+                    color = if (online) HomeTextPrimary else HomeTextSecondary,
+                    fontFamily = ManropeFontFamily,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    fontSize = designSp(if (isServerRow) 17f else NokiUiKitPolicy.homeServerItemNameTextSp, scale),
+                    letterSpacing = 0.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                )
+            }
+            Spacer(modifier = Modifier.width(designDp(10f, scale)))
+            if (location != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(designDp(6f, scale))) {
+                    Text(
+                        text = latencyText,
+                        color = if (online && latencyMs != null) HomeAccentPrimary else HomeTextSecondary,
+                        fontFamily = ManropeFontFamily,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = designSp(14f, scale),
+                        letterSpacing = 0.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        textAlign = TextAlign.Right,
+                        style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                    )
+                    Box(Modifier.size(designDp(14f, scale))) {
+                        OnlineStatusIndicator(online = online, animate = animateOnlineIndicator)
+                    }
+                }
+            }
+        }
+        if (onExpand != null) {
+            val expandLabel = tr(language, "Серверы: ", "Servers: ") + countryText
+            val expandedLabel = if (expanded) tr(language, "Развернуто", "Expanded") else tr(language, "Свернуто", "Collapsed")
             Box(
-                modifier = Modifier.size(designDp(24f, scale)),
+                modifier = Modifier.size(designDp(48f, scale).coerceAtLeast(48.dp))
+                    .semantics { stateDescription = expandedLabel }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onExpand,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                OnlineStatusIndicator(
-                    online = location.isOnline,
-                    animate = animateOnlineIndicator,
+                Icon(
+                    Icons.Rounded.ExpandMore,
+                    contentDescription = expandLabel,
+                    tint = HomeTextSecondary,
+                    modifier = Modifier.size(designDp(24f, scale)).graphicsLayer { rotationZ = arrowRotation },
                 )
             }
         }
@@ -233,15 +273,20 @@ internal fun Modifier.homeServerItemGlassSurface(
     backdrop: LayerBackdrop?,
     liveGlassEnabled: Boolean,
     scale: Float,
-    layerBlock: GraphicsLayerScope.() -> Unit,
+    selected: Boolean = false,
+    layerBlock: GraphicsLayerScope.() -> Unit = {},
 ): Modifier {
     return nokiGlassSurface(
         shape = shape,
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
         scale = scale,
-        surfaceColor = SettingsTextMuted.copy(alpha = NokiUiKitPolicy.homeServerLazyItemSurfaceAlpha),
-        simpleSurfaceColor = SettingsBgSoft,
+        surfaceColor = if (selected) {
+            HomeAccentPrimary.copy(alpha = 0.13f)
+        } else {
+            SettingsTextMuted.copy(alpha = NokiUiKitPolicy.homeServerLazyItemSurfaceAlpha)
+        },
+        simpleSurfaceColor = if (selected) androidx.compose.ui.graphics.lerp(SettingsBgSoft, HomeAccentPrimary, 0.10f) else SettingsBgSoft,
         layerBlock = layerBlock,
     )
 }
@@ -369,14 +414,7 @@ internal fun countryFlagResourceName(location: ServerLocation): String? =
     countryMarkerCode(location)?.let { code -> "flag_${code.lowercase(Locale.ROOT)}" }
 
 internal fun localizedServerCountry(location: ServerLocation, language: AppLanguage): String {
-    if (location.code.equals("lv", ignoreCase = true)) {
-        return tr(language, "Латвия", "Latvia")
-    }
-    val normalized = location.country.trim().lowercase()
-    return when {
-        location.code.equals("lv", ignoreCase = true) ||
-            normalized == "latvia" ||
-            normalized == "латвия" -> tr(language, "Латвия", "Latvia")
-        else -> location.country
-    }
+    val code = countryMarkerCode(location) ?: location.code.trim().uppercase(Locale.ROOT)
+    return Locale("", code).getDisplayCountry(Locale.forLanguageTag(language.tag))
+        .takeIf { it.isNotBlank() && !it.equals(code, true) } ?: location.country
 }

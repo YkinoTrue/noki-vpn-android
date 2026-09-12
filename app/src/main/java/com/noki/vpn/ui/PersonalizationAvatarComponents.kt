@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -51,6 +52,7 @@ internal fun PersonalizationAvatarBlock(
     onDeleteAvatarClicked: () -> Unit,
     modifier: Modifier,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val avatarBackdrop = rememberLayerBackdrop()
 
     Box(
@@ -59,8 +61,8 @@ internal fun PersonalizationAvatarBlock(
     ) {
         Box(
             modifier = Modifier
-                .width(PersonalizationAvatarLayoutPolicy.menuWidthDp.dp)
-                .height(PersonalizationAvatarLayoutPolicy.avatarSizeDp.dp),
+                .width(metrics.dp(PersonalizationAvatarLayoutPolicy.menuWidthDp))
+                .height(metrics.dp(PersonalizationAvatarLayoutPolicy.avatarSizeDp)),
             contentAlignment = Alignment.TopCenter,
         ) {
             Box(
@@ -104,7 +106,7 @@ internal fun PersonalizationAvatarBlock(
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = PersonalizationAvatarLayoutPolicy.menuTopOffsetDp.dp)
+                        .offset(y = metrics.dp(PersonalizationAvatarLayoutPolicy.menuTopOffsetDp))
                         .onGloballyPositioned { coordinates ->
                             onAvatarMenuBoundsChanged(coordinates.boundsInRoot())
                         }
@@ -125,10 +127,11 @@ internal fun PersonalizationAvatarStack(
     avatarEditingEnabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val editButtonShape = RoundedCornerShape(percent = 50)
     Box(
         modifier = Modifier
-            .size(PersonalizationAvatarLayoutPolicy.avatarSizeDp.dp)
+            .size(metrics.dp(PersonalizationAvatarLayoutPolicy.avatarSizeDp))
             .clickable(
                 enabled = !isUploadingAvatar,
                 indication = null,
@@ -138,15 +141,15 @@ internal fun PersonalizationAvatarStack(
     ) {
         Avatar(
             avatarUri = avatarUri,
-            size = PersonalizationAvatarLayoutPolicy.avatarSizeDp.dp,
+            size = metrics.dp(PersonalizationAvatarLayoutPolicy.avatarSizeDp),
         )
         Box(
             modifier = Modifier
                 .offset(
-                    x = PersonalizationAvatarLayoutPolicy.editButtonOffsetXDp.dp,
-                    y = PersonalizationAvatarLayoutPolicy.editButtonOffsetYDp.dp,
+                    x = metrics.dp(PersonalizationAvatarLayoutPolicy.editButtonOffsetXDp),
+                    y = metrics.dp(PersonalizationAvatarLayoutPolicy.editButtonOffsetYDp),
                 )
-                .size(PersonalizationAvatarLayoutPolicy.editButtonSizeDp.dp)
+                .size(metrics.dp(PersonalizationAvatarLayoutPolicy.editButtonSizeDp))
                 .graphicsLayer {
                     alpha = if (avatarEditingEnabled) 1f else 0.45f
                 }
@@ -162,7 +165,7 @@ internal fun PersonalizationAvatarStack(
             Image(
                 painter = painterResource(id = R.drawable.personalization_avatar_edit_icon),
                 contentDescription = tr(language, "Изменить аватарку", "Change avatar"),
-                modifier = Modifier.size(PersonalizationAvatarLayoutPolicy.editIconSizeDp.dp),
+                modifier = Modifier.size(metrics.dp(PersonalizationAvatarLayoutPolicy.editIconSizeDp)),
             )
         }
     }
@@ -178,16 +181,17 @@ internal fun PersonalizationAvatarMenu(
     onDeleteAvatarClicked: () -> Unit,
     modifier: Modifier,
 ) {
-    val shape = RoundedCornerShape(PersonalizationAvatarLayoutPolicy.menuCornerRadiusDp.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(PersonalizationAvatarLayoutPolicy.menuCornerRadiusDp))
     Box(
         modifier = modifier
-            .width(PersonalizationAvatarLayoutPolicy.menuWidthDp.dp)
-            .height(PersonalizationAvatarLayoutPolicy.menuHeightDp.dp)
+            .width(metrics.dp(PersonalizationAvatarLayoutPolicy.menuWidthDp))
+            .height(metrics.dp(PersonalizationAvatarLayoutPolicy.menuHeightDp))
             .nokiSettingsPanelGlassSurface(
                 shape = shape,
                 backdrop = backdrop,
                 liveGlassEnabled = liveGlassEnabled,
-                scale = 1f,
+                scale = metrics.contentScale,
                 elevationDp = 8f,
                 shadowAlpha = 0.25f,
                 blurRadiusDp = 3f,
@@ -207,22 +211,22 @@ internal fun PersonalizationAvatarMenu(
                 iconRes = R.drawable.personalization_avatar_gallery_icon,
                 text = tr(language, "Выбрать из галереи", "Choose from gallery"),
                 textColor = PersonalizationTextPrimary,
-                iconTextGap = PersonalizationAvatarLayoutPolicy.pickRowIconTextGapDp.dp,
+                iconTextGap = metrics.dp(PersonalizationAvatarLayoutPolicy.pickRowIconTextGapDp),
                 enabled = enabled,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(PersonalizationAvatarLayoutPolicy.menuRowHeightDp.dp),
+                    .height(metrics.dp(PersonalizationAvatarLayoutPolicy.menuRowHeightDp)),
                 onClick = onPickAvatarClicked,
             )
             PersonalizationAvatarMenuRow(
                 iconRes = R.drawable.personalization_avatar_delete_icon,
                 text = tr(language, "Удалить", "Delete"),
                 textColor = Color(0xFFFF6B6B),
-                iconTextGap = PersonalizationAvatarLayoutPolicy.deleteRowIconTextGapDp.dp,
+                iconTextGap = metrics.dp(PersonalizationAvatarLayoutPolicy.deleteRowIconTextGapDp),
                 enabled = enabled,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(PersonalizationAvatarLayoutPolicy.menuRowHeightDp.dp),
+                    .height(metrics.dp(PersonalizationAvatarLayoutPolicy.menuRowHeightDp)),
                 onClick = onDeleteAvatarClicked,
             )
         }
@@ -239,6 +243,7 @@ internal fun PersonalizationAvatarMenuRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Row(
         modifier = modifier
             .clickable(
@@ -247,13 +252,13 @@ internal fun PersonalizationAvatarMenuRow(
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onClick,
             )
-            .padding(horizontal = PersonalizationAvatarLayoutPolicy.menuHorizontalPaddingDp.dp),
+            .padding(horizontal = metrics.dp(PersonalizationAvatarLayoutPolicy.menuHorizontalPaddingDp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Image(
             painter = painterResource(id = iconRes),
             contentDescription = null,
-            modifier = Modifier.size(PersonalizationAvatarLayoutPolicy.menuIconSizeDp.dp),
+            modifier = Modifier.size(metrics.dp(PersonalizationAvatarLayoutPolicy.menuIconSizeDp)),
         )
         Spacer(modifier = Modifier.width(iconTextGap))
         PersonalizationText(

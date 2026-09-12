@@ -193,7 +193,7 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.refreshServerStats()
                 while (true) {
-                    delay(60_000)
+                    delay(20_000)
                     viewModel.refreshServerStats()
                 }
             }

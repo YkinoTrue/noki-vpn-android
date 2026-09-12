@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
@@ -181,7 +182,7 @@ internal fun WelcomeLoginScreen(
                             loading = false,
                             containerColor = NokiAccentPrimary,
                             contentColor = NokiBgBase,
-                            cornerRadius = 20.dp,
+                            cornerRadius = metrics.dp(20f),
                             textFontSize = metrics.sp(20f),
                             textFontWeight = FontWeight.Medium,
                             useCommonButtonTextStyle = false,
@@ -197,7 +198,7 @@ internal fun WelcomeLoginScreen(
                             text = tr(language, "Создать аккаунт", "Create account"),
                             containerColor = NokiBgLighter,
                             contentColor = NokiTextPrimary,
-                            cornerRadius = 20.dp,
+                            cornerRadius = metrics.dp(20f),
                             textFontSize = metrics.sp(14f),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -566,7 +567,8 @@ internal fun WelcomeSocialButton(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(38.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(38f))
     WelcomeGlassButton(
         modifier = modifier,
         shape = shape,
@@ -577,7 +579,7 @@ internal fun WelcomeSocialButton(
     ) {
         Row(
             modifier = Modifier,
-            horizontalArrangement = Arrangement.spacedBy(15.dp),
+            horizontalArrangement = Arrangement.spacedBy(metrics.dp(15f)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Image(

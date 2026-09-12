@@ -52,6 +52,10 @@ internal class StoredSettingsCodec(
         .put("selectedPlanTier", settings.userProfile.selectedPlanTier ?: "")
         .put("selectedPlanBadgeColor", settings.userProfile.selectedPlanBadgeColor ?: "")
         .put("selectedCountryCode", settings.userProfile.selectedCountryCode)
+        .put("serverSelectionMode", settings.userProfile.serverSelectionMode.name)
+        .put("selectedNodeId", settings.userProfile.selectedNodeId)
+        .put("selectedServerCode", settings.userProfile.selectedServerCode)
+        .put("actualCountryCode", settings.userProfile.actualCountryCode)
         .put("trafficUsedGb", settings.userProfile.trafficUsedGb)
         .put("trafficLimitGb", settings.userProfile.trafficLimitGb)
         .put("subscriptionExpiresAt", settings.userProfile.subscriptionExpiresAt ?: "")
@@ -132,6 +136,11 @@ internal class StoredSettingsCodec(
             selectedPlanTier = json.optString("selectedPlanTier").takeIf { it.isNotBlank() },
             selectedPlanBadgeColor = json.optString("selectedPlanBadgeColor").takeIf { it.isNotBlank() },
             selectedCountryCode = json.optString("selectedCountryCode"),
+            serverSelectionMode = runCatching {
+                ServerSelectionMode.valueOf(json.optString("serverSelectionMode", ServerSelectionMode.COUNTRY.name))
+            }.getOrDefault(ServerSelectionMode.COUNTRY),
+            selectedNodeId = json.optString("selectedNodeId"),
+            actualCountryCode = json.optString("actualCountryCode"),
             selectedServerCode = json.optString("selectedServerCode", "lv"),
             trafficUsedGb = json.optNullableDouble("trafficUsedGb"),
             trafficLimitGb = json.optNullableDouble("trafficLimitGb"),

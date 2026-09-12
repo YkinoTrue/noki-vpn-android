@@ -9,9 +9,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -32,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -40,7 +42,9 @@ import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.noki.vpn.AppUiState
 import com.noki.vpn.MainViewModel
+import com.noki.vpn.PaymentCheckoutResult
 import com.noki.vpn.data.PlanCatalogPolicy
+import com.noki.vpn.data.PlanCode
 
 private val PlansNoFontPaddingTextStyle = TextStyle(
     platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -56,14 +60,28 @@ fun PlansScreen(
     onCheckoutVisibilityChanged: (Boolean) -> Unit,
 ) {
     val language = state.personalizationSettings.language
+    val uriHandler = LocalUriHandler.current
+    LaunchedEffect(Unit) { viewModel.preparePaymentCheckout() }
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshPaymentStatus()
+        onPauseOrDispose { viewModel.stopPaymentStatusChecks() }
+    }
+    LaunchedEffect(state.paymentCheckout.launchUrl) {
+        val url = state.paymentCheckout.launchUrl ?: return@LaunchedEffect
+        viewModel.consumePaymentUrl()
+        try { uriHandler.openUri(url) } catch (_: Exception) { viewModel.paymentBrowserFailed() }
+    }
     val cycle = state.billingCycle
     val plans = remember(state.plans, cycle) {
         PlanCatalogPolicy.visiblePlans(state.plans, cycle)
     }
-    val pagerState = rememberPagerState(pageCount = { plans.size })
+    val initialPlanIndex = plans.indexOfFirst {
+        knownPlanCodeFromBackend(it.code) == PlanCode.PLUS || knownPlanCodeFromBackend(it.tier) == PlanCode.PLUS
+    }.takeIf { it >= 0 } ?: if (plans.size > 1) 1 else 0
+    val pagerState = rememberPagerState(initialPage = initialPlanIndex, pageCount = { plans.size })
+    var initialPlanSelected by remember { mutableStateOf(false) }
     var checkoutPlanCode by rememberSaveable { mutableStateOf<String?>(null) }
     var checkoutVisible by rememberSaveable { mutableStateOf(false) }
-    var promoCode by rememberSaveable { mutableStateOf("") }
     val checkoutPlan = remember(state.plans, checkoutPlanCode, cycle) {
         checkoutPlanCode?.let { checkoutPlanForCycle(state.plans, it, cycle) }
     }
@@ -76,14 +94,17 @@ fun PlansScreen(
         ?: state.userProfile.selectedPlanCodeRaw.ifBlank { state.userProfile.selectedPlanCode.code }
 
     BackHandler(enabled = checkoutVisible) {
-        checkoutVisible = false
+        if (!state.paymentCheckout.isSubmitting) checkoutVisible = false
     }
     LaunchedEffect(checkoutVisible) {
         onCheckoutVisibilityChanged(checkoutVisible)
     }
 
-    LaunchedEffect(plans.size) {
-        if (plans.isNotEmpty() && pagerState.currentPage > plans.lastIndex) {
+    LaunchedEffect(plans) {
+        if (plans.isNotEmpty() && !initialPlanSelected) {
+            pagerState.scrollToPage(initialPlanIndex)
+            initialPlanSelected = true
+        } else if (plans.isNotEmpty() && pagerState.currentPage > plans.lastIndex) {
             pagerState.scrollToPage(plans.lastIndex)
         }
     }
@@ -105,9 +126,6 @@ fun PlansScreen(
             val containerGap = settingsDp(40f, scale)
             val density = LocalDensity.current
             val navigationBottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
-            val checkoutMaxHeight = (
-                maxHeight - navigationBottomInset - settingsDp(48f, scale)
-            ).coerceAtLeast(0.dp)
             val bottomNavigationReserved = navigationBottomInset + metrics.dp(60f) + metrics.dp(20f)
             val centeredContentHeight = if (plans.isEmpty()) {
                 settingsDp(260f, scale)
@@ -145,23 +163,43 @@ fun PlansScreen(
                 }
 
                 if (checkoutVisible && checkoutPlan != null) {
-                    PlanCheckoutScreen(
-                        plan = checkoutPlan,
-                        currentPlanTitle = currentPlanTitle,
-                        cycle = cycle,
-                        language = language,
-                        promoCode = promoCode,
-                        onPromoCodeChanged = { promoCode = it },
-                        onCycleChanged = viewModel::setBillingCycle,
-                        backdrop = cardBackdrop,
-                        liveGlassEnabled = liveGlassEnabled,
-                        scale = scale,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .width(contentWidth)
-                            .heightIn(max = checkoutMaxHeight)
-                            .verticalScroll(rememberScrollState()),
-                    )
+                    Box(Modifier.fillMaxSize()) {
+                        PlanCheckoutScreen(
+                            plan = checkoutPlan,
+                            currentPlanTitle = currentPlanTitle,
+                            cycle = cycle,
+                            language = language,
+                            onCycleChanged = viewModel::setBillingCycle,
+                            backdrop = cardBackdrop,
+                            liveGlassEnabled = liveGlassEnabled,
+                            scale = scale,
+                            checkout = state.paymentCheckout,
+                            onMethodChanged = viewModel::selectPaymentMethod,
+                            onPay = { viewModel.createPayment(checkoutPlan.code) },
+                            onRetryConfig = viewModel::preparePaymentCheckout,
+                            onCheckStatus = viewModel::refreshPaymentStatus,
+                            onReopen = viewModel::reopenPayment,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .width(contentWidth)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                                .padding(top = settingsDp(20f, scale), bottom = navigationBottomInset + settingsDp(24f, scale)),
+                        )
+                        state.paymentCheckout.result?.let { result ->
+                            PaymentResultDialog(
+                                result = result,
+                                language = language,
+                                scale = scale,
+                                backdrop = cardBackdrop,
+                                liveGlassEnabled = liveGlassEnabled,
+                                onDismiss = {
+                                    viewModel.dismissPaymentResult()
+                                    if (result == PaymentCheckoutResult.SUCCESS) checkoutVisible = false
+                                },
+                            )
+                        }
+                    }
                 } else {
                     Column(
                         modifier = Modifier
@@ -217,16 +255,19 @@ fun PlansScreen(
                                 )
                             }
 
-                            if (!isCurrentPlan(selectedPlan, state)) {
+                            if (selectedPlan.monthlyPriceRub > 0 && !state.currentDeviceAccessRole.equals("invited", true)) {
                                 PlanActionButton(
-                                    text = tr(language, "Подключить", "Subscribe"),
+                                    text = if (isCurrentPlan(selectedPlan, state)) {
+                                        tr(language, "Продлить", "Renew")
+                                    } else {
+                                        tr(language, "Подключить", "Subscribe")
+                                    },
                                     scale = scale,
                                     modifier = Modifier.width(cardWidth),
                                     backdrop = cardBackdrop,
                                     liveGlassEnabled = liveGlassEnabled,
                                     onClick = {
                                         checkoutPlanCode = selectedPlan.code
-                                        promoCode = ""
                                         checkoutVisible = true
                                     },
                                 )

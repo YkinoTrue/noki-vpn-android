@@ -67,7 +67,9 @@ object BootstrapStateMapper {
                 selectedPlanName = bootstrap.subscription.planName,
                 selectedPlanTier = bootstrap.subscription.planTier,
                 selectedPlanBadgeColor = bootstrap.subscription.planBadgeColor,
-                selectedCountryCode = selectedCountryCode,
+                selectedCountryCode = if (currentUserProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
+                    currentUserProfile.selectedCountryCode
+                } else selectedCountryCode,
                 trafficUsedGb = bootstrap.subscription.trafficUsedGb,
                 trafficLimitGb = bootstrap.subscription.trafficLimitGb,
                 subscriptionExpiresAt = bootstrap.subscription.expiresAt,
@@ -96,6 +98,7 @@ object BootstrapStateMapper {
         legacyServerCode: String,
     ): String {
         val normalizedCurrent = currentCountryCode.trim().uppercase(Locale.ROOT)
+        if (normalizedCurrent.length == 2) return normalizedCurrent
         val migratedCountry = backendLocations
             .firstOrNull { it.code.equals(legacyServerCode.trim(), ignoreCase = true) }
             ?.countryCode
@@ -142,23 +145,27 @@ object BootstrapStateMapper {
             val selectableMembers = onlineMembers.ifEmpty { members }
             val representative = selectableMembers.minByOrNull { it.loadPercent ?: Int.MAX_VALUE }
                 ?: members.first()
-            val localized = localizedLocation(representative, language)
             val targetKey = clientLatencyTargetKey(countryCode, representative.entryHost)
+            val servers = members.flatMap { it.servers }.distinctBy { it.id }.map { server ->
+                server.copy(latencyMs = clientLatencyTargetKey(server)?.let(clientLatencyByTarget::get))
+            }
             val capacities = onlineMembers.mapNotNull { it.capacityMbps }
             val downloads = onlineMembers.mapNotNull { it.downloadMbps }
             val uploads = onlineMembers.mapNotNull { it.uploadMbps }
             ServerLocation(
                 code = countryCode,
                 countryCode = countryCode,
-                country = localized.first,
+                country = Locale("", countryCode).getDisplayCountry(Locale(language.tag)).ifBlank { countryCode },
                 city = "",
                 host = representative.entryHost,
                 capacityMbps = capacities.takeIf { it.isNotEmpty() }?.sum(),
                 downloadMbps = downloads.takeIf { it.isNotEmpty() }?.sum(),
                 uploadMbps = uploads.takeIf { it.isNotEmpty() }?.sum(),
-                latencyMs = targetKey?.let(clientLatencyByTarget::get),
+                latencyMs = if (servers.isNotEmpty()) servers.filter { it.isOnline }.mapNotNull { it.latencyMs }.minOrNull()
+                    else targetKey?.let(clientLatencyByTarget::get),
                 loadPercent = onlineMembers.mapNotNull { it.loadPercent }.minOrNull(),
-                isOnline = onlineMembers.isNotEmpty(),
+                isOnline = if (servers.isNotEmpty()) servers.any { it.isOnline } else onlineMembers.isNotEmpty(),
+                servers = servers,
             )
         }.sortedBy { it.country.lowercase(Locale.ROOT) }
     }
@@ -189,40 +196,6 @@ object BootstrapStateMapper {
                     isRecommended = plan.tier.equals("pro", ignoreCase = true),
                 )
             }
-    }
-
-    private fun localizedLocation(
-        location: BackendLocation,
-        language: AppLanguage,
-    ): Pair<String, String> {
-        val normalizedCode = location.countryCode.lowercase(Locale.ROOT)
-        return when (normalizedCode) {
-            "lv" -> {
-                val localizedName = when (language) {
-                    AppLanguage.RU -> location.nameRu
-                    AppLanguage.EN -> location.nameEn
-                }?.trim().orEmpty()
-                val rawName = localizedName.ifBlank { location.name.trim() }
-                val isGenericLatvia = rawName.isBlank() ||
-                    rawName.equals("latvia", ignoreCase = true) ||
-                    rawName.equals("латвия", ignoreCase = true)
-                if (isGenericLatvia) {
-                    if (language == AppLanguage.RU) "Латвия" to "Рига" else "Latvia" to "Riga"
-                } else {
-                    rawName to location.entryHost
-                }
-            }
-            else -> {
-                val localizedName = when (language) {
-                    AppLanguage.RU -> location.nameRu
-                    AppLanguage.EN -> location.nameEn
-                }?.trim().orEmpty()
-                val country = localizedName.ifBlank {
-                    location.name.ifBlank { location.countryCode.uppercase(Locale.ROOT) }
-                }
-                country to location.entryHost
-            }
-        }
     }
 
     private fun fallbackDeviceName(

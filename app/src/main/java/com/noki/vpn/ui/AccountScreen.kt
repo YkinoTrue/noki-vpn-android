@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -195,7 +196,7 @@ fun AccountScreen(
         val metrics = nokiAdaptiveMetrics(
             screenWidth = maxWidth,
             sidePadding = 20.dp,
-            maxContentWidth = 372.dp,
+            designContentWidth = 372.dp,
         )
         val scale = metrics.contentScale
         val accountActionsEnabled = !presentation.isInvitedDevice
@@ -210,8 +211,9 @@ fun AccountScreen(
         Column(
             modifier = Modifier
                 .width(metrics.contentWidth)
-                .align(Alignment.BottomCenter)
-                .padding(bottom = contentBottomReserve)
+                .fillMaxHeight()
+                .align(Alignment.TopCenter)
+                .padding(top = metrics.dp(20f), bottom = contentBottomReserve)
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,

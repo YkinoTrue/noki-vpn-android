@@ -20,7 +20,6 @@ object EndpointStartupPreflightPolicy {
         rotationIndex: (String) -> Int,
         canReach: (BackendEndpointCandidate) -> Boolean,
         maxAttempts: Int? = null,
-        allowHysteria: Boolean = false,
     ): Result {
         val failedCodes = mutableListOf<String>()
         val excludedCodes = mutableSetOf<String>()
@@ -38,7 +37,6 @@ object EndpointStartupPreflightPolicy {
                 nowMillis = nowMillis,
                 rotationIndex = stableRotationIndex,
                 excludedCodes = excludedCodes,
-                allowHysteria = allowHysteria,
             ) ?: break
             attempts += 1
             if (!EndpointTransportPolicy.requiresTcpPrecheck(selection.candidate)) {

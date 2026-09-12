@@ -3,6 +3,9 @@ package com.noki.vpn.ui
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,9 +30,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.Icon
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material.icons.rounded.CurrencyBitcoin
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +52,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.noki.vpn.AppUiState
+import com.noki.vpn.PaymentCheckoutState
+import com.noki.vpn.PaymentCheckoutResult
+import com.noki.vpn.R
 import com.noki.vpn.data.AppLanguage
 import com.noki.vpn.data.BillingCycle
 import com.noki.vpn.data.PlanCatalogPolicy
@@ -509,6 +520,7 @@ internal fun PlanActionButton(
     backdrop: LayerBackdrop?,
     liveGlassEnabled: Boolean,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(settingsDp(NokiUiKitPolicy.actionCornerRadiusDp, scale))
     val interactionSource = remember { MutableInteractionSource() }
@@ -525,6 +537,7 @@ internal fun PlanActionButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = ripple(color = Color.White),
+                enabled = enabled,
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
@@ -543,178 +556,319 @@ internal fun PlanActionButton(
 }
 
 @Composable
+internal fun PaymentResultDialog(
+    result: PaymentCheckoutResult,
+    language: AppLanguage,
+    scale: Float,
+    backdrop: LayerBackdrop?,
+    liveGlassEnabled: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val success = result == PaymentCheckoutResult.SUCCESS
+    val accent = if (success) SettingsAccentPrimary else SettingsError
+    val shape = RoundedCornerShape(settingsDp(22f, scale))
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.46f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(settingsDp(330f, scale))
+                .nokiSettingsPanelGlassSurface(
+                    shape = shape,
+                    backdrop = backdrop,
+                    liveGlassEnabled = liveGlassEnabled,
+                    scale = scale,
+                    surfaceColor = SettingsBgBase.copy(alpha = 0.96f),
+                )
+                .clip(shape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
+                .padding(settingsDp(22f, scale)),
+            verticalArrangement = Arrangement.spacedBy(settingsDp(16f, scale)),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(settingsDp(58f, scale))
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.16f))
+                    .border(1.dp, accent.copy(alpha = 0.65f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                SettingsText(
+                    text = if (success) "✓" else "×",
+                    fontSize = 30f,
+                    lineHeight = 32f,
+                    letterSpacing = 0f,
+                    color = accent,
+                    scale = scale,
+                    modifier = Modifier,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            SettingsText(
+                text = tr(
+                    language,
+                    if (success) "Оплата прошла успешно" else "Оплата не завершена",
+                    if (success) "Payment completed successfully" else "Payment not completed",
+                ),
+                fontSize = 20f,
+                lineHeight = 24f,
+                letterSpacing = 0f,
+                color = SettingsTextPrimary,
+                scale = scale,
+                modifier = Modifier.fillMaxWidth(),
+                fontWeight = FontWeight.SemiBold,
+            )
+            SettingsText(
+                text = tr(
+                    language,
+                    if (success) "Статус подписки обновится автоматически." else "Повторите оплату, когда будете готовы.",
+                    if (success) "Your subscription status will update automatically." else "Try the payment again when you are ready.",
+                ),
+                fontSize = 13f,
+                lineHeight = 18f,
+                letterSpacing = 0f,
+                color = SettingsTextSecondary,
+                scale = scale,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 4,
+            )
+            PlanActionButton(
+                text = tr(language, "Вернуться к тарифам", "Back to plans"),
+                scale = scale,
+                modifier = Modifier.fillMaxWidth(),
+                backdrop = backdrop,
+                liveGlassEnabled = liveGlassEnabled,
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
+@Composable
 internal fun PlanCheckoutScreen(
     plan: PlanSummary,
     currentPlanTitle: String,
     cycle: BillingCycle,
     language: AppLanguage,
-    promoCode: String,
-    onPromoCodeChanged: (String) -> Unit,
     onCycleChanged: (BillingCycle) -> Unit,
     backdrop: LayerBackdrop?,
     liveGlassEnabled: Boolean,
     scale: Float,
     modifier: Modifier,
+    checkout: PaymentCheckoutState,
+    onMethodChanged: (String) -> Unit,
+    onPay: () -> Unit,
+    onRetryConfig: () -> Unit,
+    onCheckStatus: () -> Unit,
+    onReopen: () -> Unit,
 ) {
     val planColor = settingsPlanColor(plan) ?: SettingsAccentPrimary
-    val inputShape = RoundedCornerShape(settingsDp(NokiUiKitPolicy.actionCornerRadiusDp, scale))
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    val total = PlanCatalogPolicy.checkoutTotalLabel(plan, cycle, language)
+    val panelShape = RoundedCornerShape(settingsDp(24f, scale))
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(settingsDp(20f, scale))) {
+        SettingsText(
+            text = tr(language, "Оформление подписки", "Subscription checkout"),
+            fontSize = 24f, lineHeight = 29f, letterSpacing = 0f,
+            color = SettingsTextPrimary, scale = scale, modifier = Modifier.fillMaxWidth(),
+            fontWeight = FontWeight.SemiBold,
+        )
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(settingsDp(96f, scale))
-                .padding(horizontal = settingsDp(18f, scale)),
-            horizontalArrangement = Arrangement.spacedBy(settingsDp(18f, scale)),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = settingsDp(4f, scale)),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(settingsDp(16f, scale)),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(settingsDp(5f, scale))) {
                 SettingsText(
                     text = tr(language, "Текущий тариф", "Current plan"),
-                    fontSize = 12f,
-                    lineHeight = 15f,
-                    letterSpacing = 0.12f,
-                    color = SettingsTextSecondary,
-                    scale = scale,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = 11f, lineHeight = 14f, letterSpacing = 0f,
+                    color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
                 )
                 SettingsText(
                     text = settingsCleanPlanTitle(currentPlanTitle),
-                    fontSize = 18f,
-                    lineHeight = 22f,
-                    letterSpacing = 0.18f,
-                    color = SettingsTextPrimary,
-                    scale = scale,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = 18f, lineHeight = 23f, letterSpacing = 0f,
+                    color = SettingsTextPrimary, scale = scale, modifier = Modifier.fillMaxWidth(),
                     fontWeight = FontWeight.Medium,
                 )
             }
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                contentDescription = null,
-                tint = SettingsTextSecondary,
-                modifier = Modifier.size(settingsDp(18f, scale)),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(settingsDp(20f, scale)), tint = SettingsAccentPrimary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(settingsDp(5f, scale))) {
                 SettingsText(
                     text = tr(language, "Новый тариф", "New plan"),
-                    fontSize = 12f,
-                    lineHeight = 15f,
-                    letterSpacing = 0.12f,
-                    color = SettingsTextSecondary,
-                    scale = scale,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = 11f, lineHeight = 14f, letterSpacing = 0f,
+                    color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
                 )
                 SettingsText(
                     text = settingsCleanPlanTitle(plan.title),
-                    fontSize = 18f,
-                    lineHeight = 22f,
-                    letterSpacing = 0.18f,
-                    color = SettingsTextPrimary,
-                    scale = scale,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = 18f, lineHeight = 23f, letterSpacing = 0f,
+                    color = planColor, scale = scale, modifier = Modifier.fillMaxWidth(),
                     fontWeight = FontWeight.Medium,
                 )
             }
         }
-        Spacer(modifier = Modifier.height(settingsDp(48f, scale)))
-        SettingsText(
-            text = tr(language, "К оплате", "Total"),
-            fontSize = 13f,
-            lineHeight = 16f,
-            letterSpacing = 0.12f,
-            color = SettingsTextSecondary,
-            scale = scale,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        SettingsText(
-            text = PlanCatalogPolicy.checkoutTotalLabel(plan, cycle, language),
-            fontSize = 48f,
-            lineHeight = 54f,
-            letterSpacing = 0.18f,
-            color = SettingsTextPrimary,
-            scale = scale,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(modifier = Modifier.height(settingsDp(32f, scale)))
-        CheckoutBillingCycleSelector(
-            cycle = cycle,
-            language = language,
-            activeColor = planColor,
-            scale = scale,
-            backdrop = backdrop,
-            liveGlassEnabled = liveGlassEnabled,
-            onCycleChanged = onCycleChanged,
-        )
-        Spacer(modifier = Modifier.height(settingsDp(40f, scale)))
-        SettingsText(
-            text = tr(
-                language,
-                "После оплаты тариф изменится сразу. Оставшийся срок не складывается с новым, текущий тариф будет заменён.",
-                "The plan changes immediately after payment. Remaining time is not added to the new term, the current plan is replaced.",
-            ),
-            fontSize = 12f,
-            lineHeight = 17f,
-            letterSpacing = 0.12f,
-            color = SettingsTextSecondary,
-            scale = scale,
-            textAlign = TextAlign.Start,
-            maxLines = 5,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = settingsDp(16f, scale)),
-        )
-        Spacer(modifier = Modifier.height(settingsDp(24f, scale)))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(settingsDp(48f, scale))
-                .nokiGlassSurface(
-                    shape = inputShape,
-                    backdrop = backdrop,
-                    liveGlassEnabled = liveGlassEnabled,
-                    scale = scale,
-                    elevationDp = 2f,
-                    shadowAlpha = 0.12f,
-                    highlightAlpha = 0.18f,
-                    blurRadiusDp = 5f,
-                    lensRadiusDp = 4f,
-                    lensRefractionDp = 4f,
-                    innerShadowAlpha = 0.12f,
-                    surfaceColor = Color(0xFF07111A).copy(alpha = 0.28f),
-                ),
+        Column(
+            modifier = Modifier.fillMaxWidth().nokiSettingsPanelGlassSurface(
+                shape = panelShape, backdrop = backdrop, liveGlassEnabled = liveGlassEnabled, scale = scale,
+                surfaceColor = SettingsBgLighter.copy(alpha = 0.80f),
+            ).padding(settingsDp(20f, scale)),
+            verticalArrangement = Arrangement.spacedBy(settingsDp(16f, scale)),
         ) {
-            SettingsCompactInputField(
-                value = promoCode,
-                onValueChange = onPromoCodeChanged,
-                placeholder = tr(language, "Введите промокод", "Enter promo code"),
-                scale = scale,
-                backgroundColor = Color.Transparent,
+            SettingsText(
+                text = "Noki ${settingsCleanPlanTitle(plan.title)}",
+                textAlign = TextAlign.Start,
+                fontSize = 22f, lineHeight = 27f, letterSpacing = 0f,
+                color = SettingsTextPrimary, scale = scale, modifier = Modifier.fillMaxWidth(),
+                fontWeight = FontWeight.SemiBold,
+            )
+            CheckoutBillingCycleSelector(
+                cycle = cycle, language = language, activeColor = planColor, scale = scale,
+                backdrop = backdrop, liveGlassEnabled = liveGlassEnabled,
+                onCycleChanged = { if (!checkout.isSubmitting) onCycleChanged(it) },
+            )
+            SettingsText(
+                text = tr(language, "Что входит", "What's included"),
+                textAlign = TextAlign.Start,
+                fontSize = 12f, lineHeight = 15f, letterSpacing = 0f,
+                color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(settingsDp(10f, scale))) {
+                plan.features.ifEmpty { listOf(plan.trafficLabel) }.forEach { feature ->
+                    PlanFeatureRow(text = feature, scale = scale)
+                }
+            }
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth().nokiSettingsPanelGlassSurface(
+                shape = panelShape, backdrop = backdrop, liveGlassEnabled = liveGlassEnabled, scale = scale,
+                surfaceColor = SettingsBgLighter.copy(alpha = 0.80f),
+            ).padding(settingsDp(20f, scale)),
+            verticalArrangement = Arrangement.spacedBy(settingsDp(16f, scale)),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(settingsDp(4f, scale))) {
+                SettingsText(
+                    text = tr(language, "К оплате", "Total"),
+                    textAlign = TextAlign.Start,
+                    fontSize = 12f, lineHeight = 15f, letterSpacing = 0f,
+                    color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
+                )
+                SettingsText(
+                    text = total, fontSize = 36f, lineHeight = 43f, letterSpacing = 0f,
+                    textAlign = TextAlign.Start,
+                    color = SettingsTextPrimary, scale = scale, modifier = Modifier.fillMaxWidth(),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                SettingsText(
+                    text = if (cycle == BillingCycle.MONTHLY) tr(language, "за 1 месяц", "for 1 month") else tr(language, "за 1 год", "for 1 year"),
+                    textAlign = TextAlign.Start,
+                    fontSize = 12f, lineHeight = 15f, letterSpacing = 0f,
+                    color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(SettingsStroke))
+            SettingsText(
+                text = tr(language, "Способ оплаты", "Payment method"),
+                textAlign = TextAlign.Start,
+                fontSize = 12f, lineHeight = 15f, letterSpacing = 0f,
+                color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
+            )
+            Column(
+                modifier = Modifier.selectableGroup(),
+                verticalArrangement = Arrangement.spacedBy(settingsDp(10f, scale)),
+            ) {
+                checkout.config?.methods.orEmpty().forEach { method ->
+                    val selected = method.code == checkout.methodCode
+                    val shape = RoundedCornerShape(settingsDp(16f, scale))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(settingsDp(52f, scale))
+                            .clip(shape)
+                            .background(if (selected) SettingsAccentPrimary.copy(alpha = 0.10f) else SettingsBgBase.copy(alpha = 0.35f))
+                            .border(1.dp, if (selected) SettingsAccentPrimary else SettingsStroke, shape)
+                            .selectable(selected = selected, enabled = method.enabled && !checkout.isSubmitting,
+                                role = Role.RadioButton, onClick = { onMethodChanged(method.code) })
+                            .padding(horizontal = settingsDp(14f, scale)),
+                        horizontalArrangement = Arrangement.spacedBy(settingsDp(12f, scale)),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = selected, onClick = null,
+                            modifier = Modifier.size(settingsDp(20f, scale)),
+                            colors = RadioButtonDefaults.colors(selectedColor = SettingsAccentPrimary, unselectedColor = SettingsTextMuted),
+                        )
+                        Box(Modifier.width(settingsDp(36f, scale)), contentAlignment = Alignment.Center) {
+                            when (method.code) {
+                                "card" -> Image(painterResource(R.drawable.payment_mir), null, Modifier.width(settingsDp(36f, scale)))
+                                "sbp" -> Image(painterResource(R.drawable.payment_sbp), null, Modifier.size(settingsDp(24f, scale)))
+                                "crypto" -> Icon(Icons.Rounded.CurrencyBitcoin, null, Modifier.size(settingsDp(24f, scale)), tint = SettingsTextPrimary)
+                            }
+                        }
+                        SettingsText(
+                            text = method.label,
+                            textAlign = TextAlign.Start,
+                            fontSize = 14f, lineHeight = 18f, letterSpacing = 0f,
+                            color = SettingsTextPrimary, scale = scale, modifier = Modifier.weight(1f),
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+            PlanActionButton(
+                text = if (checkout.isSubmitting) tr(language, "Создаём платёж…", "Creating payment…") else tr(language, "Оплатить $total", "Pay $total"), scale = scale,
+                modifier = Modifier.fillMaxWidth(), backdrop = backdrop, liveGlassEnabled = liveGlassEnabled,
+                enabled = !checkout.isSubmitting && !checkout.isLoading && checkout.config?.configured == true &&
+                    checkout.config.checkoutEnabled && checkout.config.methods.any { it.code == checkout.methodCode && it.enabled },
+                onClick = onPay,
+            )
+            val notice = when {
+                checkout.isLoading -> tr(language, "Загружаем способы оплаты…", "Loading payment methods…")
+                checkout.error != null -> checkout.error
+                checkout.config?.configured == false || checkout.config?.checkoutEnabled == false -> tr(language, "Оплата временно недоступна", "Payments are temporarily unavailable")
+                checkout.payment?.status == "paid" -> tr(language, "Оплата подтверждена. Обновляем подписку.", "Payment confirmed. Updating subscription.")
+                checkout.payment?.status == "pending" -> tr(language, "Платёж ожидает оплаты. Завершите оплату в браузере и вернитесь в приложение.", "Payment is pending. Complete payment in the browser and return to the app.")
+                checkout.payment?.status == "canceled" -> tr(language, "Платёж отменён", "Payment canceled")
+                checkout.payment?.status == "failed" -> tr(language, "Платёж не прошёл", "Payment failed")
+                checkout.payment?.status == "refunded" -> tr(language, "Средства возвращены", "Payment refunded")
+                else -> null
+            }
+            notice?.let {
+                SettingsText(text = it, textAlign = TextAlign.Start, fontSize = 12f, lineHeight = 17f,
+                    letterSpacing = 0f, color = SettingsTextSecondary, scale = scale,
+                    modifier = Modifier.fillMaxWidth(), maxLines = 6)
+            }
+            if (checkout.config == null && !checkout.isLoading) {
+                PlanActionButton(tr(language, "Повторить загрузку", "Retry"), scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onRetryConfig)
+            }
+            if (checkout.payment?.status == "pending") {
+                PlanActionButton(tr(language, "Открыть оплату", "Open payment"), scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onReopen, !checkout.isSubmitting)
+                PlanActionButton(if (checkout.isChecking) tr(language, "Проверяем…", "Checking…") else tr(language, "Проверить статус", "Check status"),
+                    scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onCheckStatus, !checkout.isChecking && !checkout.isSubmitting)
+            }
+            SettingsText(
+                text = tr(language, "Нажимая кнопку оплаты, вы принимаете оферту и политику конфиденциальности.", "By paying, you accept the offer and privacy policy."),
+                textAlign = TextAlign.Start,
+                fontSize = 10f, lineHeight = 14f, letterSpacing = 0f,
+                color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(), maxLines = 4,
             )
         }
-        Spacer(modifier = Modifier.height(settingsDp(24f, scale)))
-        PlanActionButton(
-            text = tr(language, "Оплатить", "Pay"),
-            scale = scale,
-            modifier = Modifier.fillMaxWidth(),
-            backdrop = backdrop,
-            liveGlassEnabled = liveGlassEnabled,
-            onClick = {},
+        SettingsText(
+            text = tr(language,
+                "После оплаты тариф изменится сразу. Оставшийся срок не складывается с новым, текущий тариф будет заменён.",
+                "The plan changes immediately after payment. Remaining time is not added to the new term, the current plan is replaced."),
+            textAlign = TextAlign.Start,
+            fontSize = 11f, lineHeight = 16f, letterSpacing = 0f,
+            color = SettingsTextSecondary, scale = scale,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = settingsDp(4f, scale)), maxLines = 6,
         )
     }
 }

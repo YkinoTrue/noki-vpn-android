@@ -14,6 +14,26 @@ class SettingsPersistenceCodecsTest {
     private val settingsCodec = StoredSettingsCodec { defaults }
 
     @Test
+    fun `fresh selection is auto while legacy storage retains its country`() {
+        assertEquals(ServerSelectionMode.AUTO, settingsCodec.decode(null).userProfile.serverSelectionMode)
+        val migrated = settingsCodec.decode("""{"selectedCountryCode":"DE"}""")
+        assertEquals(ServerSelectionMode.COUNTRY, migrated.userProfile.serverSelectionMode)
+        assertEquals("DE", migrated.userProfile.selectedCountryCode)
+    }
+
+    @Test
+    fun `manual node and actual connection round trip independently`() {
+        val profile = defaults.userProfile.copy(
+            serverSelectionMode = ServerSelectionMode.SERVER,
+            selectedCountryCode = "DE",
+            selectedNodeId = "node-a",
+            selectedServerCode = "de-frankfurt",
+            actualCountryCode = "DE",
+        )
+        assertEquals(profile, settingsCodec.decode(settingsCodec.encode(defaults.copy(userProfile = profile))).userProfile)
+    }
+
+    @Test
     fun `empty storage gets Russian direct routing defaults`() {
         val fresh = settingsCodec.decode(null)
 
@@ -116,8 +136,8 @@ class SettingsPersistenceCodecsTest {
         val decoded = settingsCodec.decode(encoded)
 
         assertEquals("DE", decoded.userProfile.selectedCountryCode)
-        assertEquals("lv", decoded.userProfile.selectedServerCode)
-        assertFalse(encoded.contains("\"selectedServerCode\""))
+        assertEquals("de-2", decoded.userProfile.selectedServerCode)
+        assertTrue(encoded.contains("\"selectedServerCode\""))
     }
 
     @Test

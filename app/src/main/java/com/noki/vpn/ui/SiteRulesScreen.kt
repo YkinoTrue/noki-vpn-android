@@ -126,13 +126,13 @@ fun SiteRulesScreen(
                 .statusBarsPadding(),
         ) {
             val metrics = nokiAdaptiveMetrics(maxWidth)
-            val headerTop = 58.dp
-            val headerTitleLineHeight = 28.8.dp
-            val headerGap = 3.dp
-            val headerSubtitleLineHeight = 14.4.dp
-            val headerToContentGap = 20.dp
+            val headerTop = metrics.dp(58f)
+            val headerTitleLineHeight = metrics.dp(28.8f)
+            val headerGap = metrics.dp(3f)
+            val headerSubtitleLineHeight = metrics.dp(14.4f)
+            val headerToContentGap = metrics.dp(20f)
             val contentTop = headerTop + headerTitleLineHeight + headerGap + headerSubtitleLineHeight + headerToContentGap
-            val contentHeight = (maxHeight - contentTop - 110.dp).coerceAtLeast(0.dp)
+            val contentHeight = (maxHeight - contentTop - metrics.dp(110f)).coerceAtLeast(0.dp)
 
             if (showBackground) {
                 HomeBackground(liveGlassEnabled = liveGlassEnabled)
@@ -146,8 +146,8 @@ fun SiteRulesScreen(
                     color = SiteRulesTextPrimary,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
-                        .offset(x = metrics.contentStart + 18.dp, y = headerTop)
-                        .width(284.dp),
+                        .offset(x = metrics.contentStart + metrics.dp(18f), y = headerTop)
+                        .width(metrics.dp(284f)),
                 )
                 SiteRulesText(
                     text = subtitleForMode(language, mode),
@@ -156,8 +156,8 @@ fun SiteRulesScreen(
                     color = SiteRulesTextSecondary,
                     maxLines = 2,
                     modifier = Modifier
-                        .offset(x = metrics.contentStart + 18.dp, y = headerTop + headerTitleLineHeight + headerGap)
-                        .width(284.dp),
+                        .offset(x = metrics.contentStart + metrics.dp(18f), y = headerTop + headerTitleLineHeight + headerGap)
+                        .width(metrics.dp(284f)),
                 )
 
                 Column(
@@ -165,7 +165,7 @@ fun SiteRulesScreen(
                         .offset(x = metrics.contentStart, y = contentTop)
                         .width(metrics.contentWidth)
                         .height(contentHeight),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(12f)),
                 ) {
                     SiteRulesEditorCard(
                         value = input,
@@ -214,7 +214,7 @@ fun SiteRulesScreen(
 
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(9.dp),
+                        verticalArrangement = Arrangement.spacedBy(metrics.dp(9f)),
                     ) {
                         if (domains.isEmpty()) {
                             item(contentType = "site-rule-empty") {
@@ -272,6 +272,7 @@ private fun SiteRulesEditorCard(
     onCancel: () -> Unit,
     onSubmit: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     SiteRulesCard(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
@@ -279,18 +280,18 @@ private fun SiteRulesEditorCard(
             .fillMaxWidth()
             .height(
                 when {
-                    error != null && editing -> 190.dp
-                    error != null -> 176.dp
-                    editing -> 164.dp
-                    else -> 150.dp
+                    error != null && editing -> metrics.dp(190f)
+                    error != null -> metrics.dp(176f)
+                    editing -> metrics.dp(164f)
+                    else -> metrics.dp(150f)
                 },
             ),
     ) { panelBackdrop ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(metrics.dp(14f)),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(10f)),
         ) {
             SiteRulesText(
                 text = if (editing) {
@@ -321,16 +322,16 @@ private fun SiteRulesEditorCard(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                horizontalArrangement = Arrangement.spacedBy(metrics.dp(9f)),
             ) {
                 if (editing) {
                     AdvancedSmallButton(
                         text = tr(language, "Отмена", "Cancel"),
                         modifier = Modifier
                             .weight(1f)
-                            .height(NokiUiKitPolicy.advancedFilterConfigureButtonHeightDp.dp),
+                            .height(metrics.dp(NokiUiKitPolicy.settingsInlineActionHeightDp)),
                         fontSize = 13f,
-                        cornerRadius = 18.dp,
+                        cornerRadius = metrics.dp(18f),
                         backdrop = panelBackdrop,
                         liveGlassEnabled = liveGlassEnabled,
                         glassEnabled = true,
@@ -341,9 +342,9 @@ private fun SiteRulesEditorCard(
                     text = tr(language, "Сохранить", "Save"),
                     modifier = Modifier
                         .weight(1f)
-                        .height(NokiUiKitPolicy.advancedFilterConfigureButtonHeightDp.dp),
+                        .height(metrics.dp(NokiUiKitPolicy.settingsInlineActionHeightDp)),
                     fontSize = 13f,
-                    cornerRadius = 18.dp,
+                    cornerRadius = metrics.dp(18f),
                     backdrop = panelBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     glassEnabled = true,
@@ -363,22 +364,23 @@ private fun SiteRuleRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     SiteRulesCard(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp),
+            .height(metrics.dp(64f)),
     ) { _ ->
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = metrics.dp(14f)),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
-                modifier = Modifier.width(151.dp),
+                modifier = Modifier.width(metrics.dp(151f)),
             ) {
                 SiteRulesText(
                     text = if (domain == DomainRulePolicy.RUSSIAN_RESOURCES_RULE) {
@@ -393,20 +395,20 @@ private fun SiteRuleRow(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(metrics.dp(7f))) {
                 SiteRulesButton(
                     text = tr(language, "Изм.", "Edit"),
                     modifier = Modifier
-                        .width(46.dp)
-                        .height(40.dp),
+                        .width(metrics.dp(46f))
+                        .height(metrics.dp(40f)),
                     onClick = onEdit,
                 )
                 SiteRulesButton(
                     text = tr(language, "Удалить", "Delete"),
                     danger = true,
                     modifier = Modifier
-                        .width(65.dp)
-                        .height(40.dp),
+                        .width(metrics.dp(65f))
+                        .height(metrics.dp(40f)),
                     onClick = onDelete,
                 )
             }
@@ -420,18 +422,19 @@ private fun SiteRulesEmptyCard(
     backdrop: LayerBackdrop?,
     liveGlassEnabled: Boolean,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     SiteRulesCard(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
         modifier = Modifier
             .fillMaxWidth()
-            .height(76.dp),
+            .height(metrics.dp(76f)),
     ) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(15.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+                .padding(metrics.dp(15f)),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(3f), Alignment.CenterVertically),
         ) {
             SiteRulesText(
                 text = tr(language, "Правил пока нет", "No rules yet"),
@@ -459,7 +462,8 @@ private fun SiteRulesInput(
     onValueChange: (String) -> Unit,
     placeholder: String,
 ) {
-    val shape = RoundedCornerShape(15.dp)
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val shape = RoundedCornerShape(metrics.dp(15f))
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -468,16 +472,16 @@ private fun SiteRulesInput(
         textStyle = TextStyle(
             color = SiteRulesTextPrimary,
             fontFamily = ManropeFontFamily,
-            fontSize = 12.sp,
-            lineHeight = 14.5.sp,
+            fontSize = metrics.sp(12f),
+            lineHeight = metrics.sp(14.5f),
             platformStyle = PlatformTextStyle(includeFontPadding = false),
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp)
+            .height(metrics.dp(38f))
             .clip(shape)
             .background(SiteRulesBgSoft, shape)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = metrics.dp(14f)),
         decorationBox = { innerTextField ->
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -528,6 +532,7 @@ private fun SiteRulesButton(
     danger: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -538,7 +543,7 @@ private fun SiteRulesButton(
         ),
         label = "SiteRulesButtonScale",
     )
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(metrics.dp(14f))
     val color = when {
         danger -> SiteRulesDanger
         else -> SiteRulesBgSoft

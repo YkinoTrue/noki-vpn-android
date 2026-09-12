@@ -36,6 +36,53 @@ class BackendApiClient(
     private val contentClient = BackendContentClient(jsonApi)
     private val authClient = BackendAuthClient(jsonApi)
 
+    internal fun onNetwork(network: android.net.Network): BackendApiClient = BackendApiClient(
+        client = client.newBuilder().socketFactory(network.socketFactory)
+            .dns { host -> network.getAllByName(host).toList() }.build(),
+        baseUrl = baseUrl,
+    )
+
+    suspend fun paymentConfig(): BackendPaymentConfig = withContext(Dispatchers.IO) {
+        val response = execute(Request.Builder().url(jsonApi.apiUrl("/payments/config")).get().build())
+        val methods = response.getJSONArray("methods")
+        BackendPaymentConfig(
+            configured = response.getBoolean("configured"),
+            checkoutEnabled = response.getBoolean("checkout_enabled"),
+            methods = (0 until methods.length()).map { index ->
+                val method = methods.getJSONObject(index)
+                BackendPaymentMethod(
+                    id = if (method.isNull("id")) null else method.getInt("id"),
+                    code = method.getString("code"),
+                    label = method.getString("label"),
+                    enabled = method.optBoolean("enabled", false),
+                )
+            },
+        )
+    }
+
+    suspend fun createPayment(
+        token: String,
+        planCode: String,
+        paymentMethod: Int?,
+        deviceId: String,
+        deviceKey: String,
+    ): BackendPayment = postJson(
+        path = "/payments/create",
+        payload = JSONObject().put("plan_code", planCode).put("payment_method", paymentMethod ?: JSONObject.NULL),
+        token = token,
+        currentDeviceId = deviceId,
+        currentDeviceKey = deviceKey,
+    ).toBackendPayment()
+
+    suspend fun payments(token: String, deviceId: String, deviceKey: String): List<BackendPayment> = withContext(Dispatchers.IO) {
+        val response = executeArray(
+            Request.Builder().url(jsonApi.apiUrl("/payments"))
+                .header("Authorization", "Bearer $token")
+                .currentDeviceHeaders(deviceId, deviceKey).get().build(),
+        )
+        (0 until response.length()).map { response.getJSONObject(it).toBackendPayment() }
+    }
+
     override suspend fun register(
         username: String,
         email: String,
@@ -282,6 +329,7 @@ class BackendApiClient(
         locationCode: String?,
         excludeLocationCode: String?,
         profileCode: String,
+        nodeId: String?,
     ): BackendVpnSession {
         val payload = JSONObject()
             .put("device_key", deviceKey)
@@ -292,8 +340,12 @@ class BackendApiClient(
             .put("location_code", locationCode)
             .put("exclude_location_code", excludeLocationCode)
             .put("profile_code", profileCode)
+            .put("node_id", nodeId)
         return postJson("/vpn/session", payload, token).toBackendVpnSession()
     }
+
+    override suspend fun serverLocations(token: String, deviceId: String?, deviceKey: String?): List<BackendLocation> =
+        bootstrap(token, deviceId, deviceKey).locations
 
     override suspend fun createTemporaryVpnChallenge(
         publicKey: String,

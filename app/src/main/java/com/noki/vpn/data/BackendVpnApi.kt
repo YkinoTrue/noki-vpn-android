@@ -1,6 +1,7 @@
 package com.noki.vpn.data
 
 interface VpnSessionApi {
+    suspend fun serverLocations(token: String, deviceId: String?, deviceKey: String?): List<BackendLocation>
     suspend fun vpnAccess(
         token: String,
         deviceId: String?,
@@ -32,6 +33,7 @@ interface VpnSessionApi {
         locationCode: String?,
         excludeLocationCode: String?,
         profileCode: String,
+        nodeId: String? = null,
     ): BackendVpnSession
 }
 
@@ -39,6 +41,8 @@ data class VpnSessionSelection(
     val countryCode: String,
     val locationCode: String? = null,
     val excludeLocationCode: String? = null,
+    val nodeId: String? = null,
+    val excludedNodeIds: Set<String> = emptySet(),
 )
 
 interface TemporaryVpnApi {

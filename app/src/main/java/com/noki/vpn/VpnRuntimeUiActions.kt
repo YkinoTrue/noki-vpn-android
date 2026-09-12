@@ -7,7 +7,6 @@ import com.noki.vpn.data.PlanCode
 import com.noki.vpn.data.RuntimeProfilePolicy
 import com.noki.vpn.data.StoredSettings
 import com.noki.vpn.data.VpnConnectionState
-import com.noki.vpn.data.clientLatencyTargetKey
 import com.noki.vpn.vpn.VpnRuntimeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -51,6 +50,7 @@ internal fun AppUiRuntime.updateConnectionState(
         }
         is ConnectionStateReducer.Transition.Normal -> applyConnectionTransition(transition, runtimeMode)
     }
+    if (state != VpnConnectionState.CONNECTED) uiState = uiState.copy(activeLatencyMs = null)
     applyLatencyUpdate(latencyLocationCode, latencyMs)
 }
 
@@ -107,26 +107,15 @@ internal fun AppUiRuntime.applyLatencyUpdate(
     val safeLatency = latencyMs ?: return
     val safeCode = locationCode.trim()
     if (safeCode.isBlank()) return
-    uiState.locations
-        .firstOrNull { location -> location.code.equals(safeCode, ignoreCase = true) }
-        ?.let(::clientLatencyTargetKey)
-        ?.let { targetKey ->
-            clientLatencyByTarget = clientLatencyByTarget + (targetKey to safeLatency)
-        }
-    uiState = uiState.copy(
-        locations = uiState.locations.map { location ->
-            if (location.code.equals(safeCode, ignoreCase = true)) {
-                location.copy(latencyMs = safeLatency)
-            } else {
-                location
-            }
-        },
-    )
+    // Runtime readiness is tunnel latency; it must not overwrite physical-network catalog probes.
+    uiState = uiState.copy(activeLatencyMs = safeLatency.takeIf { uiState.connectionState == VpnConnectionState.CONNECTED })
 }
 
 internal data class RuntimeSettingsSyncKey(
     val profile: com.noki.vpn.data.VlessProfile,
     val selectedCountryCode: String,
+    val serverSelectionMode: com.noki.vpn.data.ServerSelectionMode,
+    val selectedNodeId: String,
     val selectedPlanCode: com.noki.vpn.data.PlanCode,
     val protocol: com.noki.vpn.data.VpnProtocol,
     val endpointSelectionMode: com.noki.vpn.data.EndpointSelectionMode,
@@ -138,6 +127,8 @@ internal data class RuntimeSettingsSyncKey(
 internal fun runtimeSettingsSyncKey(state: AppUiState): RuntimeSettingsSyncKey = RuntimeSettingsSyncKey(
     profile = state.profile,
     selectedCountryCode = state.userProfile.selectedCountryCode,
+    serverSelectionMode = state.userProfile.serverSelectionMode,
+    selectedNodeId = state.userProfile.selectedNodeId,
     selectedPlanCode = state.userProfile.selectedPlanCode,
     protocol = state.advancedSettings.protocol,
     endpointSelectionMode = state.advancedSettings.endpointSelectionMode,
@@ -157,6 +148,7 @@ internal fun applyRuntimeOwnedSettingsSnapshot(
         selectedPlanCode = stored.userProfile.selectedPlanCode,
         selectedPlanCodeRaw = stored.userProfile.selectedPlanCodeRaw,
         selectedServerCode = stored.userProfile.selectedServerCode,
+        actualCountryCode = stored.userProfile.actualCountryCode,
     ),
     advancedSettings = current.advancedSettings.copy(
         manualEndpointCode = stored.advancedSettings.manualEndpointCode,

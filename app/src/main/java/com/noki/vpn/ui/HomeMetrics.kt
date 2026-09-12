@@ -62,6 +62,7 @@ internal fun HomeMetricsPanel(
     liveGlassEnabled: Boolean,
 ) {
     val speedUnit = "Mb/s"
+    val traffic = com.noki.vpn.data.TrafficFormat.bytes(metrics.sessionBytes ?: 0L, language)
     Row(
         modifier = modifier
             .fillMaxWidth(),
@@ -96,10 +97,10 @@ internal fun HomeMetricsPanel(
                 icon = HomeMetricIcon.Latency,
             ),
             bottom = HomeMetricRowUi(
-                title = tr(language, "Нагрузка", "Load"),
-                value = metrics.load ?: "--",
-                unit = "%",
-                icon = HomeMetricIcon.Load,
+                title = tr(language, "Трафик", "Traffic"),
+                value = traffic.value.takeIf { metrics.sessionBytes != null } ?: "--",
+                unit = traffic.unit,
+                icon = HomeMetricIcon.Traffic,
             ),
             scale = scale,
             backdrop = backdrop,
@@ -215,7 +216,7 @@ internal fun metricIconGap(icon: HomeMetricIcon, scale: Float): Dp {
         HomeMetricIcon.Upload,
         HomeMetricIcon.Download -> designDp(8f, scale)
         HomeMetricIcon.Latency -> designDp(6f, scale)
-        HomeMetricIcon.Load -> designDp(7f, scale)
+        HomeMetricIcon.Traffic -> designDp(7f, scale)
     }
 }
 
@@ -224,7 +225,7 @@ internal fun metricIconOffsetY(icon: HomeMetricIcon, scale: Float): Dp {
         HomeMetricIcon.Latency -> -designDp(2f, scale)
         HomeMetricIcon.Upload,
         HomeMetricIcon.Download,
-        HomeMetricIcon.Load -> 0.dp
+        HomeMetricIcon.Traffic -> 0.dp
     }
 }
 
@@ -233,7 +234,7 @@ internal fun metricValueGap(icon: HomeMetricIcon, scale: Float): Dp {
         HomeMetricIcon.Upload,
         HomeMetricIcon.Download -> designDp(8f, scale)
         HomeMetricIcon.Latency -> designDp(10f, scale)
-        HomeMetricIcon.Load -> designDp(12f, scale)
+        HomeMetricIcon.Traffic -> designDp(12f, scale)
     }
 }
 
@@ -248,7 +249,7 @@ internal fun HomeMetricIconCanvas(
             HomeMetricIcon.Upload -> drawTrafficArrow(up = true, scale = scale)
             HomeMetricIcon.Download -> drawTrafficArrow(up = false, scale = scale)
             HomeMetricIcon.Latency -> drawLatencyBars(scale = scale)
-            HomeMetricIcon.Load -> drawLoadPulse(scale = scale)
+            HomeMetricIcon.Traffic -> drawSessionTraffic(scale = scale)
         }
     }
 }
@@ -301,26 +302,17 @@ internal fun DrawScope.drawLatencyBars(scale: Float) {
     }
 }
 
-internal fun DrawScope.drawLoadPulse(scale: Float) {
+internal fun DrawScope.drawSessionTraffic(scale: Float) {
     val stroke = designDp(1.5f, scale).toPx()
-    val color = HomeAccentPrimary
-    val points = listOf(
-        Offset(size.width * 0.05f, size.height * 0.58f),
-        Offset(size.width * 0.25f, size.height * 0.58f),
-        Offset(size.width * 0.38f, size.height * 0.25f),
-        Offset(size.width * 0.56f, size.height * 0.78f),
-        Offset(size.width * 0.70f, size.height * 0.45f),
-        Offset(size.width * 0.95f, size.height * 0.45f),
+    drawRoundRect(
+        color = HomeAccentPrimary,
+        topLeft = Offset(size.width * 0.1f, size.height * 0.12f),
+        size = Size(size.width * 0.8f, size.height * 0.76f),
+        cornerRadius = CornerRadius(stroke, stroke),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
     )
-    points.zipWithNext().forEach { (start, end) ->
-        drawLine(
-            color = color,
-            start = start,
-            end = end,
-            strokeWidth = stroke,
-            cap = StrokeCap.Round,
-        )
-    }
+    drawLine(HomeAccentPrimary, Offset(size.width * 0.1f, size.height * 0.5f),
+        Offset(size.width * 0.9f, size.height * 0.5f), strokeWidth = stroke)
 }
 
 @Composable
@@ -423,17 +415,18 @@ internal fun currentMetrics(
     selectedLocation: ServerLocation?,
     connectionState: VpnConnectionState,
     deviceTraffic: HomeDeviceTrafficSnapshot,
+    activeLatencyMs: Int? = null,
 ): HomeMetricsSnapshot {
-    if (selectedLocation == null || !selectedLocation.isOnline) {
-        return HomeMetricsSnapshot(download = null, upload = null, latency = null, load = null)
-    }
     val isConnected = connectionState == VpnConnectionState.CONNECTED
+    if (!isConnected && (selectedLocation == null || !selectedLocation.isOnline)) {
+        return HomeMetricsSnapshot(download = null, upload = null, latency = null, sessionBytes = null)
+    }
 
     return HomeMetricsSnapshot(
         download = deviceTraffic.downloadMbps.takeIf { isConnected },
         upload = deviceTraffic.uploadMbps.takeIf { isConnected },
-        latency = selectedLocation.latencyMs?.toString(),
-        load = selectedLocation.loadPercent?.toString(),
+        latency = (if (isConnected) activeLatencyMs else selectedLocation?.latencyMs)?.toString(),
+        sessionBytes = deviceTraffic.sessionBytes.takeIf { isConnected },
     )
 }
 
@@ -449,6 +442,7 @@ internal fun rememberDeviceTrafficSnapshot(
     return HomeDeviceTrafficSnapshot(
         downloadMbps = snapshot.downloadMbps?.formatMetricValue(),
         uploadMbps = snapshot.uploadMbps?.formatMetricValue(),
+        sessionBytes = snapshot.sessionBytes,
     )
 }
 

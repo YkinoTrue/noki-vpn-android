@@ -95,7 +95,6 @@ object EndpointGroupPolicy {
             networkKind = EndpointRankingPolicy.NetworkKind.OTHER,
             nowMillis = nowMillis,
             rotationIndex = rotationIndex,
-            allowHysteria = true,
         )
     }
 

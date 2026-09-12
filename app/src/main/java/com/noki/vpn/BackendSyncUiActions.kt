@@ -1,5 +1,7 @@
 package com.noki.vpn
 
+import com.noki.vpn.data.withClientLatencies
+
 import android.os.SystemClock
 import com.noki.vpn.data.AuthRefreshRejectedException
 import com.noki.vpn.data.ServerLocation
@@ -268,17 +270,30 @@ internal fun clientLatencyRequestTarget(locations: List<ServerLocation>): List<S
     locations
         .asSequence()
         .filter { it.isOnline }
-        .mapNotNull(::clientLatencyTargetKey)
+        .flatMap { location ->
+            if (location.servers.isEmpty()) sequenceOf(clientLatencyTargetKey(location))
+            else location.servers.asSequence().filter { it.isOnline }.map { clientLatencyTargetKey(it) }
+        }
+        .filterNotNull()
         .sorted()
         .toList()
 
-internal fun AppUiRuntime.refreshClientLatenciesAsync(locations: List<ServerLocation>) {
+internal fun AppUiRuntime.refreshClientLatenciesAsync(
+    locations: List<ServerLocation>,
+    refreshCached: Boolean = false,
+) {
     val attempt = authSessionCoordinator.attempt() ?: return
+    val networkSignature = clientLatencySampler.networkSignature()
     val target = clientLatencyRequestTarget(locations)
     if (target.isEmpty()) return
     val activeJob = clientLatencyRefreshJob
     if (activeJob != null) {
-        if (clientLatencyRefreshTarget == target) return
+        val sameNetwork = clientLatencyRefreshNetworkSignature == networkSignature
+        if (clientLatencyRefreshTarget == target && sameNetwork && !refreshCached) return
+        if (!sameNetwork) {
+            clientLatencyByTarget = emptyMap()
+            uiState = uiState.copy(locations = uiState.locations.map { it.withClientLatencies(emptyMap()) })
+        }
         clientLatencyRefreshJob = null
         clientLatencyRefreshTarget = null
         activeJob.cancel()
@@ -289,7 +304,7 @@ internal fun AppUiRuntime.refreshClientLatenciesAsync(locations: List<ServerLoca
         try {
             val measured = measureClientLatencies(locations)
             if (
-                measured.isEmpty() ||
+                clientLatencySampler.networkSignature() != networkSignature ||
                 clientLatencyRefreshJob !== ownerJob ||
                 !ownerJob.isActive ||
                 !authSessionCoordinator.isCurrent(attempt) ||
@@ -297,17 +312,17 @@ internal fun AppUiRuntime.refreshClientLatenciesAsync(locations: List<ServerLoca
             ) {
                 return@launch
             }
-            clientLatencyByTarget = clientLatencyByTarget + measured
+            clientLatencyByTarget = measured
             uiState = uiState.copy(
                 locations = uiState.locations.map { location ->
-                    val targetKey = clientLatencyTargetKey(location)
-                    location.copy(
-                        latencyMs = targetKey?.let(measured::get)
-                            ?: targetKey?.let(clientLatencyByTarget::get)
-                            ?: location.latencyMs,
-                    )
+                    location.withClientLatencies(measured)
                 },
             )
+            // Keep presentation samples fresh and owned by this physical network.
+            val expiresAt = SystemClock.elapsedRealtime() + 30_000L
+            while (SystemClock.elapsedRealtime() < expiresAt &&
+                clientLatencySampler.networkSignature() == networkSignature
+            ) kotlinx.coroutines.delay(1_000L)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -326,12 +341,18 @@ internal fun AppUiRuntime.refreshClientLatenciesAsync(locations: List<ServerLoca
             }
         } finally {
             if (clientLatencyRefreshJob === ownerJob) {
+                if (authSessionCoordinator.isCurrent(attempt)) {
+                    clientLatencyByTarget = emptyMap()
+                    uiState = uiState.copy(locations = uiState.locations.map { it.withClientLatencies(emptyMap()) })
+                }
                 clientLatencyRefreshJob = null
                 clientLatencyRefreshTarget = null
+                clientLatencyRefreshNetworkSignature = null
             }
         }
     }
     clientLatencyRefreshTarget = target
+    clientLatencyRefreshNetworkSignature = networkSignature
     clientLatencyRefreshJob = job
     job.start()
 }

@@ -106,8 +106,8 @@ fun AdvancedSettingsScreen(
                         .fillMaxSize()
                         .statusBarsPadding()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 21.dp)
-                        .padding(top = 58.dp, bottom = 150.dp),
+                        .padding(horizontal = metrics.contentStart)
+                        .padding(top = metrics.dp(58f), bottom = metrics.dp(150f)),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                 AdvancedText(
@@ -116,9 +116,9 @@ fun AdvancedSettingsScreen(
                     lineHeight = 28.8f,
                     color = AdvancedTextPrimary,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp),
+                        .padding(horizontal = metrics.dp(18f)),
                 )
                 AdvancedText(
                     text = tr(
@@ -130,12 +130,12 @@ fun AdvancedSettingsScreen(
                     lineHeight = 14.4f,
                     color = AdvancedTextSecondary,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp),
+                        .padding(horizontal = metrics.dp(18f)),
                 )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(metrics.dp(20f)))
 
                 AdvancedProtocolToggleCard(
                     autoEndpointSelection = autoEndpointSelection,
@@ -143,9 +143,9 @@ fun AdvancedSettingsScreen(
                     backdrop = surfaceBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .height(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp.dp),
+                        .height(metrics.dp(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp)),
                     onAutoEndpointSelectionChanged = { enabled ->
                         viewModel.toggleAutoEndpointSelection(enabled)
                         if (!enabled) {
@@ -155,7 +155,7 @@ fun AdvancedSettingsScreen(
                 )
 
                 if (!autoEndpointSelection) {
-                    Spacer(modifier = Modifier.height(25.dp))
+                    Spacer(modifier = Modifier.height(metrics.dp(25f)))
 
                     AdvancedManualProtocolCard(
                         selectedEndpoint = protocolCardLabel(state, autoEndpointSelection),
@@ -163,9 +163,9 @@ fun AdvancedSettingsScreen(
                         backdrop = surfaceBackdrop,
                         liveGlassEnabled = liveGlassEnabled,
                         modifier = Modifier
-                            .widthIn(max = 370.dp)
+                            .widthIn(max = metrics.dp(370f))
                             .fillMaxWidth()
-                            .height(NokiUiKitPolicy.advancedManualProtocolCardHeightDp.dp),
+                            .height(metrics.dp(NokiUiKitPolicy.advancedManualProtocolCardHeightDp)),
                         onChangeProtocol = {
                             if (!autoEndpointSelection) {
                                 viewModel.refreshEndpointOptions(context, force = true)
@@ -175,7 +175,7 @@ fun AdvancedSettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(25.dp))
+                Spacer(modifier = Modifier.height(metrics.dp(25f)))
 
                 AdvancedFilterCard(
                     mode = state.filterMode,
@@ -183,14 +183,13 @@ fun AdvancedSettingsScreen(
                     backdrop = surfaceBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
-                        .fillMaxWidth()
-                        .height(NokiUiKitPolicy.advancedFilterCardHeightDp.dp),
+                        .widthIn(max = metrics.dp(370f))
+                        .fillMaxWidth(),
                     onModeChanged = viewModel::updateFilterMode,
                     onConfigure = onAppFilterClicked,
                 )
 
-                Spacer(modifier = Modifier.height(15.dp))
+                Spacer(modifier = Modifier.height(metrics.dp(15f)))
 
                 AdvancedYoutubeNoAdsRow(
                     language = language,
@@ -199,12 +198,12 @@ fun AdvancedSettingsScreen(
                     backdrop = surfaceBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .height(80.dp),
+                        .height(metrics.dp(80f)),
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(metrics.dp(24f)))
 
                 AdvancedText(
                     text = tr(language, "Умные правила для сайтов", "Smart site rules"),
@@ -212,9 +211,9 @@ fun AdvancedSettingsScreen(
                     lineHeight = 21.6f,
                     color = AdvancedTextPrimary,
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = metrics.dp(20f)),
                 )
                 AdvancedText(
                     text = tr(
@@ -226,18 +225,18 @@ fun AdvancedSettingsScreen(
                     lineHeight = 12.6f,
                     color = AdvancedTextSecondary.copy(alpha = 0.8f),
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = metrics.dp(20f)),
                 )
 
-                Spacer(modifier = Modifier.height(15.dp))
+                Spacer(modifier = Modifier.height(metrics.dp(15f)))
 
                 Column(
                     modifier = Modifier
-                        .widthIn(max = 370.dp)
+                        .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(12f)),
                 ) {
                 AdvancedDomainRuleWideCard(
                     title = tr(language, "Всегда включать", "Always on"),
@@ -248,7 +247,7 @@ fun AdvancedSettingsScreen(
                     liveGlassEnabled = liveGlassEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(76.dp),
+                        .height(metrics.dp(76f)),
                     onConfigure = onAlwaysOnRulesClicked,
                 )
 
@@ -261,7 +260,7 @@ fun AdvancedSettingsScreen(
                     liveGlassEnabled = liveGlassEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(76.dp),
+                        .height(metrics.dp(76f)),
                     onConfigure = onBypassRulesClicked,
                 )
                 }
@@ -277,8 +276,8 @@ fun AdvancedSettingsScreen(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .padding(bottom = metrics.dp(150f))
-                            .width(328.dp)
-                            .height(58.dp),
+                            .width(metrics.dp(328f))
+                            .height(metrics.dp(58f)),
                     )
                 }
 
@@ -291,7 +290,7 @@ fun AdvancedSettingsScreen(
                         language = language,
                         backdrop = surfaceBackdrop,
                         liveGlassEnabled = liveGlassEnabled,
-                        bottomNavigationClearance = metrics.dp(80f) + 10.dp,
+                        bottomNavigationClearance = metrics.dp(80f) + metrics.dp(10f),
                         onDismiss = { showProtocolSheet = false },
                         onProtocolSelected = { selected ->
                             showProtocolSheet = false

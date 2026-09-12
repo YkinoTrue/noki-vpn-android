@@ -113,7 +113,6 @@ object EndpointSelector {
                     nowMillis = System.currentTimeMillis(),
                     rotationIndex = rotationIndex,
                     canReach = startupTcpPrecheck,
-                    allowHysteria = true,
                 )
                 return CandidateSelection(
                     candidate = preflight.selected,

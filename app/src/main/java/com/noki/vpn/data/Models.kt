@@ -64,6 +64,8 @@ enum class EndpointSelectionMode {
     MANUAL,
 }
 
+enum class ServerSelectionMode { AUTO, COUNTRY, SERVER }
+
 enum class VpnConnectionState {
     DISCONNECTED,
     CONNECTING,
@@ -197,6 +199,9 @@ data class UserProfile(
     val selectedPlanTier: String? = null,
     val selectedPlanBadgeColor: String? = null,
     val selectedCountryCode: String = "LV",
+    val serverSelectionMode: ServerSelectionMode = ServerSelectionMode.COUNTRY,
+    val selectedNodeId: String = "",
+    val actualCountryCode: String = "",
     val selectedServerCode: String = "lv",
     val trafficUsedGb: Double? = null,
     val trafficLimitGb: Double? = null,
@@ -286,6 +291,23 @@ data class ServerLocation(
     val latencyMs: Int? = null,
     val loadPercent: Int? = null,
     val isOnline: Boolean,
+    val servers: List<VpnServer> = emptyList(),
+)
+
+@Immutable
+data class VpnServer(
+    val id: String,
+    val name: String,
+    val countryCode: String,
+    val locationCode: String,
+    val host: String,
+    val probePort: Int?,
+    val isOnline: Boolean,
+    val capacityMbps: Int? = null,
+    val loadPercent: Int? = null,
+    val metricsAt: String? = null,
+    val weight: Int = 1,
+    val latencyMs: Int? = null,
 )
 
 @Immutable

@@ -17,6 +17,8 @@ internal object VpnServiceLogContext {
         remark: String,
         language: AppLanguage,
     ): String {
+        val serverName = remark.trim().removePrefix("Noki ").replace("_", " ").trim()
+        if (serverName.isNotBlank() && serverName != "VPN") return serverName
         val code = selectedServerCode.trim().lowercase()
         return when (code) {
             "lv", "latvia" -> if (language == AppLanguage.RU) "Латвия" else "Latvia"
@@ -25,11 +27,7 @@ internal object VpnServiceLogContext {
             "fi", "finland" -> if (language == AppLanguage.RU) "Финляндия" else "Finland"
             "pl", "poland" -> if (language == AppLanguage.RU) "Польша" else "Poland"
             "us", "usa", "united-states" -> if (language == AppLanguage.RU) "США" else "USA"
-            else -> remark
-                .replace("Noki", "")
-                .replace("_", " ")
-                .trim()
-                .ifBlank { selectedServerCode.uppercase() }
+            else -> selectedServerCode.uppercase()
         }
     }
 }

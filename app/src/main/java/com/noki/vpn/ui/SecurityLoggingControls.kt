@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -45,9 +46,10 @@ internal fun SecurityLoggingRow(
     onAnonymousLogsChange: (Boolean) -> Unit,
     onUploadLocalLogs: () -> Unit,
 ) {
-    val expandedHeight = if (logUploadMessage.isNullOrBlank()) 190.dp else 215.dp
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
+    val expandedHeight = if (logUploadMessage.isNullOrBlank()) metrics.dp(190f) else metrics.dp(215f)
     val panelHeight by animateDpAsState(
-        targetValue = if (loggingEnabled) expandedHeight else 60.dp,
+        targetValue = if (loggingEnabled) expandedHeight else metrics.dp(60f),
         animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
         label = "SecurityLoggingPanelHeight",
     )
@@ -64,8 +66,8 @@ internal fun SecurityLoggingRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp)
-                    .padding(horizontal = 20.dp),
+                    .height(metrics.dp(60f))
+                    .padding(horizontal = metrics.dp(20f)),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -77,9 +79,10 @@ internal fun SecurityLoggingRow(
                     fontWeight = FontWeight.Normal,
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 12.dp),
+                        .padding(end = metrics.dp(12f)),
                 )
                 SecurityLiquidToggle(
+                    sizeFactor = metrics.contentScale,
                     selected = loggingEnabled,
                     onSelectedChange = onLoggingEnabledChange,
                     backdrop = backdrop,
@@ -96,10 +99,10 @@ internal fun SecurityLoggingRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
-                            horizontal = 20.dp,
-                            vertical = 20.dp,
+                            horizontal = metrics.dp(20f),
+                            vertical = metrics.dp(20f),
                         ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.dp(12f)),
                 ) {
                     SecurityLogOption(
                         title = tr(language, "Автоматическая отправка", "Automatic sending"),
@@ -152,18 +155,19 @@ internal fun SecurityLogOption(
     liveGlassEnabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(36.dp),
+            .height(metrics.dp(36f)),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+                .padding(end = metrics.dp(12f)),
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(2f)),
         ) {
             SecurityText(
                 text = title,
@@ -189,7 +193,7 @@ internal fun SecurityLogOption(
             onSelectedChange = { if (enabled) onCheckedChange(it) },
             backdrop = backdrop,
             liveGlassEnabled = backdrop != null && enabled,
-            sizeFactor = 0.86f,
+            sizeFactor = 0.86f * metrics.contentScale,
             modifier = Modifier.graphicsLayer {
                 alpha = if (enabled) 1f else 0.42f
             },
@@ -205,6 +209,7 @@ internal fun SecurityLogSendButton(
     liveGlassEnabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -212,11 +217,11 @@ internal fun SecurityLogSendButton(
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 520f),
         label = "SecurityLogSendButtonScale",
     )
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(metrics.dp(18f))
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(42.dp)
+            .height(metrics.dp(NokiUiKitPolicy.settingsInlineActionHeightDp))
             .graphicsLayer {
                 alpha = if (enabled) 1f else 0.44f
             }
@@ -248,7 +253,7 @@ internal fun SecurityLogSendButton(
             fontWeight = FontWeight.Normal,
             textAlign = TextAlign.Center,
             maxLines = 1,
-            modifier = Modifier.padding(horizontal = 12.dp),
+            modifier = Modifier.padding(horizontal = metrics.dp(12f)),
         )
     }
 }
