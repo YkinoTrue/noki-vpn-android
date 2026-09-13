@@ -281,6 +281,9 @@ internal fun IncyDeviceDialogs(
                     enabled = !state.isLoading,
                     containerHeight = devicesDp(42f, scale),
                     capsulePadding = devicesDp(4f, scale),
+                    lensRefractionHeight = devicesDp(4f, scale),
+                    lensRefractionAmount = devicesDp(6f, scale),
+                    chromaticAberration = false,
                     liveGlassEnabled = liveGlassEnabled,
                     depthEffectEnabled = false,
                 )

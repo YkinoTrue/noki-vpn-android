@@ -69,6 +69,7 @@ internal fun GlassSegmentedControl(
     activeBlur: Dp = 1.5.dp,
     lensRefractionHeight: Dp = 12.dp,
     lensRefractionAmount: Dp = 32.dp,
+    chromaticAberration: Boolean = true,
     maxPressedScaleX: Float = 1.18f,
     liveGlassEnabled: Boolean = true,
     depthEffectEnabled: Boolean = true,
@@ -288,7 +289,7 @@ internal fun GlassSegmentedControl(
                                             refractionHeight = lensRefractionHeight.toPx() * progress,
                                             refractionAmount = lensRefractionAmount.toPx() * progress,
                                             depthEffect = depthEffectEnabled,
-                                            chromaticAberration = true,
+                                            chromaticAberration = chromaticAberration,
                                         )
                                     },
                                     highlight = {
