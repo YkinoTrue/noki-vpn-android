@@ -107,10 +107,6 @@ class MainActivity : ComponentActivity() {
                     intent.getStringExtra(AppVpnService.EXTRA_RUNTIME_MODE).orEmpty(),
                 )
             }.getOrDefault(VpnRuntimeMode.ACCOUNT)
-            val latencyLocationCode = intent.getStringExtra(AppVpnService.EXTRA_LATENCY_LOCATION_CODE).orEmpty()
-            val latencyMs = intent.takeIf { it.hasExtra(AppVpnService.EXTRA_LATENCY_MS) }
-                ?.getIntExtra(AppVpnService.EXTRA_LATENCY_MS, 0)
-                ?.takeIf { it >= 0 }
             val state = runCatching { VpnConnectionState.valueOf(rawState) }
                 .getOrElse { VpnConnectionState.DISCONNECTED }
             viewModel.updateConnectionState(
@@ -118,8 +114,6 @@ class MainActivity : ComponentActivity() {
                 reason = reason,
                 connectedAtMillis = connectedAtMillis.takeIf { it > 0L },
                 runtimeMode = runtimeMode,
-                latencyLocationCode = latencyLocationCode,
-                latencyMs = latencyMs,
             )
         }
     }

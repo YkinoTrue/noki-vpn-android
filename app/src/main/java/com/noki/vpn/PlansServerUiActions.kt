@@ -71,7 +71,6 @@ internal fun AppUiRuntime.refreshServers() {
 }
 
 internal fun AppUiRuntime.refreshServerStats() {
-    if (uiState.connectionState == VpnConnectionState.CONNECTED) vpnCommands.refreshLatency()
     if (authSessionCoordinator.attempt() == null) return
     // Local probes must not wait for the separately throttled backend refresh.
     refreshClientLatenciesAsync(uiState.locations, refreshCached = true)
@@ -95,7 +94,6 @@ internal fun AppUiRuntime.refreshAllData(
     showNetworkFailureInline: Boolean = true,
     refreshClientLatency: Boolean = false,
 ) {
-    if (uiState.connectionState == VpnConnectionState.CONNECTED) vpnCommands.refreshLatency()
     refreshClientLatenciesAsync(uiState.locations, refreshCached = true)
     launchBackendRefresh(
         trigger = BackendRefreshTrigger.UserRefresh,

@@ -314,9 +314,7 @@ class MainViewModel(
         reason: String = "",
         connectedAtMillis: Long? = null,
         runtimeMode: VpnRuntimeMode = uiState.vpnRuntimeMode,
-        latencyLocationCode: String = "",
-        latencyMs: Int? = null,
-    ) = runtime.updateConnectionState(state, reason, connectedAtMillis, runtimeMode, latencyLocationCode, latencyMs)
+    ) = runtime.updateConnectionState(state, reason, connectedAtMillis, runtimeMode)
 
     fun getVpnPermissionIntent(context: Context): Intent? = runtime.getVpnPermissionIntent(context)
 

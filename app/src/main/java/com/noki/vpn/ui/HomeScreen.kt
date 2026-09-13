@@ -97,7 +97,7 @@ fun HomeScreen(
                 connectionState = state.connectionState,
                 enabled = liveWorkEnabled,
             )
-            val metrics = currentMetrics(selectedLocation, state.connectionState, deviceTraffic, state.activeLatencyMs)
+            val metrics = currentMetrics(state, deviceTraffic)
             val autoEndpointSelection =
                 state.advancedSettings.endpointSelectionMode == EndpointSelectionMode.AUTO
             val connectionTimeLabel = rememberConnectionTimeLabel(

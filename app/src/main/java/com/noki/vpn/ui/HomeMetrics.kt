@@ -414,20 +414,28 @@ internal fun HomeStatusCard(
 }
 
 internal fun currentMetrics(
-    selectedLocation: ServerLocation?,
-    connectionState: VpnConnectionState,
+    state: com.noki.vpn.AppUiState,
     deviceTraffic: HomeDeviceTrafficSnapshot,
-    activeLatencyMs: Int? = null,
 ): HomeMetricsSnapshot {
-    val isConnected = connectionState == VpnConnectionState.CONNECTED
+    val isConnected = state.connectionState == VpnConnectionState.CONNECTED
+    val selectedLocation = homeSelectedLocation(state.locations, state.userProfile)
     if (!isConnected && (selectedLocation == null || !selectedLocation.isOnline)) {
         return HomeMetricsSnapshot(download = null, upload = null, latency = null, sessionBytes = null)
     }
 
+    val servers = state.locations.flatMap { it.servers }
+    val serverLatency = when {
+        isConnected -> servers.firstOrNull {
+            it.locationCode.equals(state.userProfile.selectedServerCode, ignoreCase = true)
+        }?.latencyMs
+        state.userProfile.serverSelectionMode == com.noki.vpn.data.ServerSelectionMode.SERVER ->
+            servers.firstOrNull { it.id == state.userProfile.selectedNodeId }?.latencyMs
+        else -> selectedLocation?.latencyMs
+    }
     return HomeMetricsSnapshot(
         download = deviceTraffic.downloadMbps.takeIf { isConnected },
         upload = deviceTraffic.uploadMbps.takeIf { isConnected },
-        latency = (if (isConnected) activeLatencyMs else selectedLocation?.latencyMs)?.toString(),
+        latency = serverLatency?.toString(),
         sessionBytes = deviceTraffic.sessionBytes.takeIf { isConnected },
     )
 }

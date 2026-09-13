@@ -413,7 +413,6 @@ data class AppUiState(
     val connectionState: VpnConnectionState = VpnConnectionState.DISCONNECTED,
     val vpnRuntimeMode: VpnRuntimeMode = VpnRuntimeMode.ACCOUNT,
     val connectedAtMillis: Long? = null,
-    val activeLatencyMs: Int? = null,
     val connectionReason: String = "",
     val inlineMessage: String? = null,
     val authStep: AuthStep = AuthStep.WELCOME,
