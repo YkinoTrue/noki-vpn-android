@@ -42,7 +42,6 @@ object LogoutStateReducer {
             incyDevices = IncyDevicesUiState(),
             connectionState = VpnConnectionState.DISCONNECTED,
             connectedAtMillis = null,
-            activeLatencyMs = null,
             connectionReason = "",
             inlineMessage = if (language == AppLanguage.RU) {
                 "Вы вышли из аккаунта"

@@ -1,5 +1,6 @@
 package com.noki.vpn.ui
 
+import com.noki.vpn.AppUiState
 import com.noki.vpn.data.ServerLocation
 import com.noki.vpn.data.ServerSelectionMode
 import com.noki.vpn.data.UserProfile
@@ -74,18 +75,41 @@ class HomeTextPolicyTest {
 
     @Test
     fun `metrics expose traffic only while connected but keep server health`() {
-        val server = location(latencyMs = 24, loadPercent = 31)
+        val node = VpnServer("node2", "Latvia 2", "LV", "lv2", "lv2.example", 443, true, latencyMs = 39)
+        val server = location(latencyMs = 24, loadPercent = 31).copy(servers = listOf(node))
+        val state = AppUiState(
+            locations = listOf(server),
+            userProfile = UserProfile(selectedServerCode = "lv2"),
+            connectionState = VpnConnectionState.CONNECTING,
+        )
         val traffic = HomeDeviceTrafficSnapshot(downloadMbps = "2.5", uploadMbps = "1", sessionBytes = 1_048_576L)
 
         assertEquals(
             HomeMetricsSnapshot(download = null, upload = null, latency = "24", sessionBytes = null),
-            currentMetrics(server, VpnConnectionState.CONNECTING, traffic),
+            currentMetrics(state, traffic),
         )
         assertEquals(
             HomeMetricsSnapshot(download = "2.5", upload = "1", latency = "39", sessionBytes = 1_048_576L),
-            currentMetrics(server, VpnConnectionState.CONNECTED, traffic, activeLatencyMs = 39),
+            currentMetrics(state.copy(connectionState = VpnConnectionState.CONNECTED), traffic),
         )
-        assertNull(currentMetrics(server, VpnConnectionState.CONNECTED, traffic).latency)
+        for (mode in ServerSelectionMode.entries) {
+            val connected = state.copy(
+                connectionState = VpnConnectionState.CONNECTED,
+                userProfile = state.userProfile.copy(serverSelectionMode = mode, selectedNodeId = node.id),
+            )
+            assertEquals(node.latencyMs.toString(), currentMetrics(connected, traffic).latency)
+            assertNull(currentMetrics(connected.copy(locations = listOf(server.copy(
+                servers = listOf(node.copy(latencyMs = null)),
+            ))), traffic).latency)
+            assertNull(currentMetrics(connected.copy(userProfile = connected.userProfile.copy(
+                selectedServerCode = "missing",
+            )), traffic).latency)
+        }
+        val manual = state.copy(userProfile = state.userProfile.copy(
+            serverSelectionMode = ServerSelectionMode.SERVER, selectedNodeId = node.id,
+        ))
+        assertEquals("39", currentMetrics(manual, traffic).latency)
+        assertEquals("39", currentMetrics(manual.copy(connectionState = VpnConnectionState.DISCONNECTED), traffic).latency)
     }
 
     private fun location(

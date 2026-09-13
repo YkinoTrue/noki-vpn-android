@@ -26,8 +26,6 @@ internal fun AppUiRuntime.updateConnectionState(
     reason: String = "",
     connectedAtMillis: Long? = null,
     runtimeMode: VpnRuntimeMode = uiState.vpnRuntimeMode,
-    latencyLocationCode: String = "",
-    latencyMs: Int? = null,
 ) {
     when (val transition = connectionStateTransition(state, reason, connectedAtMillis)) {
         is ConnectionStateReducer.Transition.TrafficLimit -> {
@@ -50,8 +48,6 @@ internal fun AppUiRuntime.updateConnectionState(
         }
         is ConnectionStateReducer.Transition.Normal -> applyConnectionTransition(transition, runtimeMode)
     }
-    if (state != VpnConnectionState.CONNECTED) uiState = uiState.copy(activeLatencyMs = null)
-    applyLatencyUpdate(latencyLocationCode, latencyMs)
 }
 
 internal fun AppUiRuntime.connectionStateTransition(
@@ -98,17 +94,6 @@ internal fun AppUiRuntime.applyConnectionTransition(
     ) {
         syncRuntimeSettingsFromRepository()
     }
-}
-
-internal fun AppUiRuntime.applyLatencyUpdate(
-    locationCode: String,
-    latencyMs: Int?,
-) {
-    val safeLatency = latencyMs ?: return
-    val safeCode = locationCode.trim()
-    if (safeCode.isBlank()) return
-    // Runtime readiness is tunnel latency; it must not overwrite physical-network catalog probes.
-    uiState = uiState.copy(activeLatencyMs = safeLatency.takeIf { uiState.connectionState == VpnConnectionState.CONNECTED })
 }
 
 internal data class RuntimeSettingsSyncKey(
