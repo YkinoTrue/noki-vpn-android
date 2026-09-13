@@ -50,6 +50,90 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 class AppVpnServiceCommandTest {
     @Test
+    fun requestedLatencyPublishesFreshSamplesAndCoalescesConcurrentRefreshes() = runBlocking {
+        val fixture = Fixture(this)
+        val repository = SettingsRepository(fixture.service)
+        val settings = repository.load().let {
+            it.copy(userProfile = it.userProfile.copy(selectedServerCode = "lv"))
+        }
+        var measured = 40
+        var probes = 0
+        val samples = mutableListOf<Int>()
+        val coordinator = VpnStatsCoordinator(
+            context = fixture.service,
+            scope = this,
+            scheduler = object : DelayedTaskScheduler {
+                override fun schedule(owner: Any, delayMillis: Long, task: () -> Unit) = Unit
+                override fun cancel(owner: Any) = Unit
+            },
+            measureConnectedLatencyMs = { probes++; yield(); measured },
+            onLatencySample = { _, latency -> samples += latency },
+        )
+        coordinator.start(repository, settings, RuntimeOwner(1L, 1L))
+        coordinator.refreshLatency()
+        coordinator.refreshLatency()
+        repeat(3) { yield() }
+        assertEquals(listOf(40), samples)
+        assertEquals(1, probes)
+        measured = 75
+        coordinator.refreshLatency()
+        repeat(3) { yield() }
+        assertEquals(listOf(40, 75), samples)
+        coordinator.refreshLatency()
+        coordinator.reset()
+        repeat(3) { yield() }
+        assertEquals(listOf(40, 75), samples)
+    }
+
+    @Test
+    fun transientPreparationFailuresKeepRecoveryAliveAndBackOff() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.useOfflinePreparation()
+        fixture.orchestrator.updateState(VpnConnectionState.CONNECTING)
+        fixture.prepareFailure(java.io.IOException("network lost"))
+        repeat(3) { attempt ->
+            if (attempt > 0) {
+                shadowOf(Looper.getMainLooper()).idleFor(
+                    java.time.Duration.ofMillis(ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt - 1)),
+                )
+                fixture.orchestrator.activeTransitionJob()!!.join()
+            }
+
+            assertFalse("network loss must not stop automatic recovery", shadowOf(fixture.service).isStoppedBySelf)
+            assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+            assertNull("failed VPN must release ordinary internet", fixture.orchestrator.currentTunnel())
+            assertEquals(attempt + 1, fixture.recoveryAttempt())
+        }
+        fixture.stop(1)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(6))
+        assertEquals(0, fixture.recoveryAttempt())
+        assertEquals(VpnConnectionState.DISCONNECTED, fixture.orchestrator.currentState())
+    }
+
+    @Test
+    fun permanentPreparationFailureStopsRecovery() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.set("transientRecoveryAttempt", 2)
+        fixture.prepareFailure(IllegalStateException("auth_required"))
+
+        org.junit.Assert.assertTrue(shadowOf(fixture.service).isStoppedBySelf)
+        assertEquals(0, fixture.recoveryAttempt())
+        assertNull(fixture.orchestrator.currentTunnel())
+    }
+
+    @Test
+    fun nonDestructiveRefreshFailureKeepsConnectedTunnel() = runBlocking {
+        val fixture = Fixture(this)
+        val tunnel = fixture.orchestrator.currentTunnel()
+        fixture.prepareFailure(java.io.IOException("network lost"), destructive = false)
+
+        assertEquals(VpnConnectionState.CONNECTED, fixture.orchestrator.currentState())
+        assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+        assertEquals(0, fixture.recoveryAttempt())
+    }
+
+    @Test
     fun failedRuntimeCandidatesReachHysteriaWithinOneStart() = runBlocking {
         val fixture = Fixture(this, probeFallback = true)
         fixture.startPrepared()
@@ -221,6 +305,12 @@ class AppVpnServiceCommandTest {
                 transform(value).also { value = it }
         }
         private val scheduler = HandlerDelayedTaskScheduler(android.os.Handler(Looper.getMainLooper()))
+        private val preparer = VpnConnectionPreparer(
+            store = store,
+            currentNetworkKind = { EndpointRankingPolicy.NetworkKind.OTHER },
+            resolveStart = { _, _, _, _ -> error("unexpected backend call") },
+            refreshAccessToken = { error("unexpected token refresh") },
+        )
         val orchestrator = VpnConnectionOrchestrator(
             xray = object : XrayRuntime {
                 override fun start(config: String, tunFd: Int): Boolean {
@@ -250,12 +340,7 @@ class AppVpnServiceCommandTest {
                     }
                 }
             },
-            preparer = VpnConnectionPreparer(
-                store = store,
-                currentNetworkKind = { EndpointRankingPolicy.NetworkKind.OTHER },
-                resolveStart = { _, _, _, _ -> error("unexpected backend call") },
-                refreshAccessToken = { error("unexpected token refresh") },
-            ),
+            preparer = preparer,
             settings = VpnSettingsCommitCoordinator(store),
             sidecars = OwnedVpnConnectedSidecars(onStart = { _, _ -> }, onStop = {}),
         )
@@ -264,6 +349,7 @@ class AppVpnServiceCommandTest {
             // Do not run onCreate: Android/native adapters are the external
             // boundary; lifecycle arbitration and command handling remain real.
             set("connectionOrchestrator", orchestrator)
+            set("connectionPreparer", preparer)
             set("backgroundScope", scope)
             set("delayedTaskScheduler", scheduler)
             set("warmupController", VpnWarmupController<BackendVpnSession>(scheduler, 1L))
@@ -286,6 +372,31 @@ class AppVpnServiceCommandTest {
         }
 
         fun startAccount() = invoke("startVpn", true, false)
+
+        fun useOfflinePreparation() {
+            store.updateSettings { it.copy(backendAccessToken = "test-token") }
+            set("connectionPreparer", VpnConnectionPreparer(
+                store = store,
+                currentNetworkKind = { EndpointRankingPolicy.NetworkKind.OTHER },
+                resolveStart = { _, _, _, _ ->
+                    VpnStartCoordinator.StartDecision.Failure(java.io.IOException("network lost"))
+                },
+                refreshAccessToken = { error("unexpected token refresh") },
+                retryCount = 0,
+            ))
+        }
+
+        fun prepareFailure(error: Throwable, destructive: Boolean = true) {
+            AppVpnService::class.java.getDeclaredMethod(
+                "handlePrepareFailure", SettingsRepository::class.java, String::class.java,
+                Throwable::class.java, Boolean::class.javaPrimitiveType,
+            ).apply { isAccessible = true }.invoke(
+                service, SettingsRepository(service), "profile_prepare_error", error, destructive,
+            )
+        }
+
+        fun recoveryAttempt(): Int = AppVpnService::class.java.getDeclaredField("transientRecoveryAttempt")
+            .apply { isAccessible = true }.getInt(service)
 
         fun savedSettings(): StoredSettings = store.load()
 

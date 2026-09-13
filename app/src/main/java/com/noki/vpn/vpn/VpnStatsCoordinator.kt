@@ -7,6 +7,7 @@ import android.os.SystemClock
 import com.noki.vpn.data.SettingsRepository
 import com.noki.vpn.data.StoredSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -19,6 +20,7 @@ internal class VpnStatsCoordinator(
 ) {
     private val appContext = context.applicationContext
     private var owner: RuntimeOwner? = null
+    private var latencyJob: Job? = null
     private val tracker = VpnRuntimeStatsTracker(
         currentDate = LocalDate::now,
         elapsedRealtime = SystemClock::elapsedRealtime,
@@ -30,6 +32,8 @@ internal class VpnStatsCoordinator(
     )
 
     fun start(repository: SettingsRepository, settings: StoredSettings, runtimeOwner: RuntimeOwner) {
+        latencyJob?.cancel()
+        latencyJob = null
         owner = runtimeOwner
         val date = tracker.start(runtimeOwner, settings.userProfile.selectedServerCode)
         repository.recordDailyStatsSessionStart(date)
@@ -44,6 +48,8 @@ internal class VpnStatsCoordinator(
     }
 
     fun reset() {
+        latencyJob?.cancel()
+        latencyJob = null
         tracker.stopScheduling()
         owner?.let(tracker::clear)
         owner = null
@@ -81,9 +87,14 @@ internal class VpnStatsCoordinator(
         result.latencyRequest?.let { recordImmediateLatency(repository, it) }
     }
 
+    fun refreshLatency() {
+        val request = tracker.requestLatencySample() ?: return
+        recordImmediateLatency(SettingsRepository(appContext), request)
+    }
+
     private fun recordImmediateLatency(repository: SettingsRepository, request: LatencySampleRequest) {
-        if (request.locationCode.isBlank()) return
-        scope.launch {
+        if (request.locationCode.isBlank() || latencyJob?.isActive == true) return
+        latencyJob = scope.launch {
             if (!tracker.accepts(request)) return@launch
             measureConnectedLatencyMs()?.let { latencyMs ->
                 if (!tracker.accepts(request)) return@let

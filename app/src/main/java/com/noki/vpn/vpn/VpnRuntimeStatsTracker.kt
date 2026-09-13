@@ -125,6 +125,13 @@ internal class VpnRuntimeStatsTracker(
     @Synchronized
     fun accepts(request: LatencySampleRequest): Boolean = owner == request.owner
 
+    @Synchronized
+    fun requestLatencySample(): LatencySampleRequest? {
+        val currentOwner = owner ?: return null
+        val code = locationCode?.takeIf(String::isNotBlank) ?: return null
+        return LatencySampleRequest(currentOwner, currentDate().toString(), code)
+    }
+
     private fun clear() {
         scheduler?.cancel(tickerOwner)
         schedulingActive = false

@@ -5,7 +5,7 @@ import java.util.Locale
 object DefaultStoredSettingsFactory {
     const val FULL_GLASS_MIN_API_LEVEL = 33
 
-    private val defaultRussianDirectPackages = setOf(
+    private val legacyRussianDirectPackages = setOf(
         "ru.rostel",
         "ru.sberbankmobile",
         "com.idamob.tinkoff.android",
@@ -29,6 +29,26 @@ object DefaultStoredSettingsFactory {
         "ru.rutube.app",
         "ru.sbcs.store",
     )
+
+    private val defaultRussianDirectPackages = legacyRussianDirectPackages + setOf(
+        "ru.oneme.app", // MAX
+        "com.vk.im",
+        "com.vk.vkvideo",
+        "ru.mts.mymts",
+        "ru.megafon.mlk",
+        "ru.beeline.services",
+        "ru.tele2.mytele2",
+        "ru.sber.telecom",
+        "ru.onlime.my.app",
+        "com.logistic.sdek",
+    )
+
+    fun updatedDefaultPackages(packages: Set<String>, mode: AppFilterMode): Set<String> =
+        if (mode == AppFilterMode.ALL_EXCEPT_SELECTED && packages == legacyRussianDirectPackages) {
+            defaultRussianDirectPackages
+        } else {
+            packages
+        }
 
     fun create(
         locale: Locale = Locale.getDefault(),

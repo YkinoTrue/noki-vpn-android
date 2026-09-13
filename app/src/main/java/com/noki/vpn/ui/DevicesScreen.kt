@@ -139,17 +139,17 @@ fun DevicesScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .widthIn(max = 370.dp),
-                        verticalArrangement = Arrangement.spacedBy(15.dp),
+                        verticalArrangement = Arrangement.spacedBy(devicesDp(30f, scale)),
                         horizontalAlignment = Alignment.Start,
                     ) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                            verticalArrangement = Arrangement.spacedBy(devicesDp(15f, scale)),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(20.dp),
+                                verticalArrangement = Arrangement.spacedBy(devicesDp(30f, scale)),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 DevicesHeader(
@@ -160,7 +160,7 @@ fun DevicesScreen(
                                 )
                                 Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(devicesDp(10f, scale)),
+                                    verticalArrangement = Arrangement.spacedBy(devicesDp(15f, scale)),
                                 ) {
                                     DevicesText(
                                         text = tr(language, "Текущее устройство", "Current device"),
@@ -168,7 +168,7 @@ fun DevicesScreen(
                                         lineHeight = 14.4f,
                                         color = DevicesTextSecondary,
                                         scale = scale,
-                                        modifier = Modifier.padding(horizontal = devicesDp(18f, scale)),
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
                                     CurrentDeviceCard(
                                         device = currentDevice,

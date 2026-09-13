@@ -294,7 +294,12 @@ class AppVpnService : VpnService() {
         when (intent?.action) {
             ACTION_STOP -> stopVpn(startId)
             ACTION_RESTART -> manualRestartVpn()
-            ACTION_QUERY_STATE -> broadcastCurrentState()
+            ACTION_QUERY_STATE -> {
+                broadcastCurrentState()
+                if (currentState == VpnConnectionState.CONNECTED &&
+                    intent.getBooleanExtra(EXTRA_REFRESH_LATENCY, false)
+                ) statsCoordinator.refreshLatency()
+            }
             ACTION_APPLY_SETTINGS -> applyRuntimeSettings()
             else -> {
                 val options = VpnServiceStartCommandPolicy.startOptions(
@@ -680,6 +685,12 @@ class AppVpnService : VpnService() {
         destructiveOnFailure: Boolean,
     ) {
         if (destructiveOnFailure) {
+            if (currentRuntimeMode == VpnRuntimeMode.ACCOUNT &&
+                error != null && BackendRetryPolicy.isTransient(error)
+            ) {
+                failClosedAfterReplacementFailure(repository, repository.load(), reason)
+                return
+            }
             failStart(repository, reason, error)
             return
         }
@@ -2663,6 +2674,7 @@ class AppVpnService : VpnService() {
             "com.noki.vpn.STOP_AND_REVOKE_AUTH_TEMP"
         private const val ACTION_RESTART = "com.noki.vpn.RESTART"
         private const val ACTION_QUERY_STATE = "com.noki.vpn.QUERY_STATE"
+        private const val EXTRA_REFRESH_LATENCY = "refresh_latency"
         private const val ACTION_APPLY_SETTINGS = "com.noki.vpn.APPLY_SETTINGS"
         const val ACTION_STATE_CHANGED = "com.noki.vpn.STATE_CHANGED"
         const val EXTRA_STATE = "state"
@@ -2728,8 +2740,9 @@ class AppVpnService : VpnService() {
             action = ACTION_RESTART
         }
 
-        fun queryStateIntent(context: Context): Intent = Intent(context, AppVpnService::class.java).apply {
+        fun queryStateIntent(context: Context, refreshLatency: Boolean = false): Intent = Intent(context, AppVpnService::class.java).apply {
             action = ACTION_QUERY_STATE
+            putExtra(EXTRA_REFRESH_LATENCY, refreshLatency)
         }
 
         fun applySettingsIntent(context: Context): Intent = Intent(context, AppVpnService::class.java).apply {

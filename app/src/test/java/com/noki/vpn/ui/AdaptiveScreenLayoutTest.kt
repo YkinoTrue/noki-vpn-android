@@ -297,7 +297,7 @@ class AdaptiveScreenLayoutTest {
                     com.noki.vpn.data.BackendPaymentMethod(null, "card", "Карта", true),
                     com.noki.vpn.data.BackendPaymentMethod(2, "sbp", "СБП", true),
                     com.noki.vpn.data.BackendPaymentMethod(13, "crypto", "Криптовалюта", true))), methodCode = "card")) }
-            PlanCheckoutScreen(plan, "Free", com.noki.vpn.data.BillingCycle.MONTHLY, AppLanguage.RU, {}, null, false,
+            PlanCheckoutScreen(plan, "Free", false, com.noki.vpn.data.BillingCycle.MONTHLY, AppLanguage.RU, {}, null, false,
                 470f / 370f, Modifier.padding(horizontal = 21.dp).width(470.dp).verticalScroll(rememberScrollState()).padding(top = 20.dp, bottom = 24.dp),
                 payment, { payment = payment.copy(methodCode = it) }, {}, {}, {}, {})
         }.use {
@@ -368,7 +368,19 @@ class AdaptiveScreenLayoutTest {
             compose.onNodeWithText("Переименовать").assertDoesNotExist()
             val heading = compose.onNodeWithText("Текущее устройство").fetchSemanticsNode().boundsInRoot
             val card = compose.onNode(hasText("Samsung SM-G996B") and hasClickAction()).fetchSemanticsNode().boundsInRoot
+            val removeOthers = compose.onNode(
+                hasText("Удалить все устройства кроме текущего") and hasClickAction(),
+            ).fetchSemanticsNode().boundsInRoot
+            val otherDevices = compose.onNodeWithText("Другие устройства").fetchSemanticsNode().boundsInRoot
             assertTrue("Current-device heading must be outside and above the card", heading.bottom < card.top)
+            assertEquals(
+                "Current-device content uses equal gaps",
+                card.top - heading.bottom, removeOthers.top - card.bottom, 2f,
+            )
+            assertTrue(
+                "Other devices needs a separate group gap",
+                otherDevices.top - removeOthers.bottom >= removeOthers.height * 0.40f,
+            )
             saveImage("devices-wide")
         }
     }
@@ -383,7 +395,7 @@ class AdaptiveScreenLayoutTest {
         AccountScreen(
             state = AppUiState(personalizationSettings = PersonalizationSettings(language = AppLanguage.RU)),
             sharedBackdrop = null, liveGlassEnabled = false,
-            onPersonalizationClicked = {}, onPlansClicked = {}, onSupportClicked = {},
+            onPersonalizationClicked = {}, onPlansClicked = {}, onDevicesClicked = {}, onSupportClicked = {},
             onSecurityClicked = {}, onNotificationsClicked = {}, onNotificationDeleted = {},
             onDeleteAccountClicked = {}, onAccessDenied = {}, onDismissDialog = {}, onConfirmDialog = {},
         )
@@ -391,6 +403,10 @@ class AdaptiveScreenLayoutTest {
         val header = compose.onNodeWithText("Профиль").fetchSemanticsNode().boundsInRoot
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
         assertTrue("Profile must begin in the top tenth of the screen", header.top < root.height / 10)
+        compose.onNodeWithText("Поддержка").performScrollTo()
+        val devices = compose.onNodeWithText("Устройства").fetchSemanticsNode().boundsInRoot
+        val support = compose.onNodeWithText("Поддержка").fetchSemanticsNode().boundsInRoot
+        assertTrue("Devices must precede support", devices.bottom < support.top)
         saveImage("profile-wide")
     }
 
