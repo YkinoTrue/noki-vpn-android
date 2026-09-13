@@ -32,7 +32,28 @@ class BootstrapStateMapperTest {
         ).single()
 
         assertEquals("Рабочий телефон", row.title)
-        assertTrue(row.subtitle.startsWith("Samsung SM-G996B • "))
+        assertTrue(row.subtitle.startsWith("Samsung Galaxy S21+ 5G • "))
+        assertEquals("Samsung Galaxy S21+ 5G", AndroidDeviceInfo.displayName("samsung SM-G996B"))
+        assertEquals("Unknown MODEL-123", AndroidDeviceInfo.displayName("Unknown MODEL-123"))
+        val unnamed = BootstrapStateMapper.mapDevices(
+            listOf(device.copy(customName = null)), AppLanguage.EN, "device-1", "stable-key",
+        ).single()
+        assertEquals("Samsung Galaxy S21+ 5G", unnamed.title)
+    }
+
+    @Test
+    fun `country and server latency only use device samples`() {
+        val server = VpnServer("node", "Server", "LV", "lv1", "node.example", 443, true, latencyMs = 2)
+        val backend = location("lv1").copy(latencyMs = 1, servers = listOf(server))
+        val withoutSamples = BootstrapStateMapper.mapLocations(listOf(backend), AppLanguage.RU, emptyMap()).single()
+        assertEquals(null, withoutSamples.latencyMs)
+        assertEquals(null, withoutSamples.servers.single().latencyMs)
+        val measured = BootstrapStateMapper.mapLocations(
+            listOf(backend), AppLanguage.RU, mapOf(clientLatencyTargetKey(server)!! to 87),
+        ).single()
+        assertEquals(87, measured.latencyMs)
+        assertEquals(87, measured.servers.single().latencyMs)
+        assertEquals(null, measured.withClientLatencies(emptyMap()).latencyMs)
     }
 
     @Test

@@ -96,6 +96,7 @@ internal fun AppUiRuntime.refreshAllData(
     refreshClientLatency: Boolean = false,
 ) {
     if (uiState.connectionState == VpnConnectionState.CONNECTED) vpnCommands.refreshLatency()
+    refreshClientLatenciesAsync(uiState.locations, refreshCached = true)
     launchBackendRefresh(
         trigger = BackendRefreshTrigger.UserRefresh,
         showNetworkFailureInline = showNetworkFailureInline,

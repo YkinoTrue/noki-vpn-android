@@ -118,12 +118,15 @@ object BootstrapStateMapper {
         currentDeviceKey: String,
     ): List<DeviceSession> {
         return devices.map { device ->
+            val displayDevice = if (device.platform.equals("android", ignoreCase = true)) {
+                device.copy(deviceName = AndroidDeviceInfo.displayName(device.deviceName))
+            } else device
             val isCurrent = device.id == currentDeviceId || device.deviceKey == currentDeviceKey
             DeviceSession(
                 id = device.id,
                 title = device.customName?.trim()?.takeIf(String::isNotBlank)
-                    ?: device.deviceName.ifBlank { fallbackDeviceName(device.platform, language) },
-                subtitle = buildDeviceSubtitle(device, language, isCurrent),
+                    ?: displayDevice.deviceName.ifBlank { fallbackDeviceName(device.platform, language) },
+                subtitle = buildDeviceSubtitle(displayDevice, language, isCurrent),
                 isCurrent = isCurrent,
                 isOnline = isCurrent || device.isActive,
                 isActive = device.isActive,

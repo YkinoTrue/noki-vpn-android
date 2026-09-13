@@ -62,7 +62,7 @@ internal fun HomeMetricsPanel(
     liveGlassEnabled: Boolean,
 ) {
     val speedUnit = "Mb/s"
-    val traffic = com.noki.vpn.data.TrafficFormat.bytes(metrics.sessionBytes ?: 0L, language)
+    val traffic = com.noki.vpn.data.TrafficFormat.bytes(metrics.sessionBytes ?: 0L, AppLanguage.EN)
     Row(
         modifier = modifier
             .fillMaxWidth(),
@@ -99,7 +99,7 @@ internal fun HomeMetricsPanel(
             bottom = HomeMetricRowUi(
                 title = tr(language, "Трафик", "Traffic"),
                 value = traffic.value.takeIf { metrics.sessionBytes != null } ?: "--",
-                unit = traffic.unit,
+                unit = traffic.unit.replace('B', 'b'),
                 icon = HomeMetricIcon.Traffic,
             ),
             scale = scale,
