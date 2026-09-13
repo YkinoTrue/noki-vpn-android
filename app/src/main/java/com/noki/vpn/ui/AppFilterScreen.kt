@@ -1,8 +1,6 @@
 package com.noki.vpn.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,7 +18,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.rounded.Search
@@ -35,10 +32,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -186,11 +185,16 @@ fun AppFilterScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             AppFilterApplyButton(
-                                text = tr(language, "Применить", "Apply"),
+                                text = if (applyNoticeVisible) {
+                                    tr(language, "Применено", "Applied")
+                                } else {
+                                    tr(language, "Применить", "Apply")
+                                },
                                 backdrop = backdrop,
                                 liveGlassEnabled = liveGlassEnabled,
                                 modifier = Modifier
                                     .weight(1f)
+                                    .semantics { liveRegion = LiveRegionMode.Polite }
                                     .height(metrics.dp(60f)),
                                 onClick = {
                                     viewModel.applyAppRoutingSettings()
@@ -204,30 +208,6 @@ fun AppFilterScreen(
                                 modifier = Modifier.size(metrics.dp(60f)),
                                 onClick = viewModel::requestAppFilterReset,
                             )
-                        }
-                        if (applyNoticeVisible) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .offset(y = (-31).dp)
-                                    .clip(RoundedCornerShape(metrics.dp(12f)))
-                                    .background(AppFilterBgLighter.copy(alpha = 0.96f))
-                                    .border(
-                                        BorderStroke(1.dp, AppFilterAccentPrimary.copy(alpha = 0.45f)),
-                                        RoundedCornerShape(metrics.dp(12f)),
-                                    )
-                                    .padding(horizontal = metrics.dp(12f), vertical = metrics.dp(5f)),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                AppFilterText(
-                                    text = tr(language, "Применено", "Applied"),
-                                    fontSize = 11f,
-                                    lineHeight = 13f,
-                                    color = AppFilterTextPrimary,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier,
-                                )
-                            }
                         }
                     }
                 }

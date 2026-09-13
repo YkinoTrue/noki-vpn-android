@@ -189,7 +189,7 @@ fun AdvancedSettingsScreen(
                     onConfigure = onAppFilterClicked,
                 )
 
-                Spacer(modifier = Modifier.height(metrics.dp(15f)))
+                Spacer(modifier = Modifier.height(metrics.dp(25f)))
 
                 AdvancedYoutubeNoAdsRow(
                     language = language,

@@ -65,6 +65,8 @@ import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -166,6 +168,7 @@ fun AccountScreen(
     liveGlassEnabled: Boolean = true,
     onPersonalizationClicked: () -> Unit,
     onPlansClicked: () -> Unit,
+    onDevicesClicked: () -> Unit,
     onSupportClicked: () -> Unit,
     onSecurityClicked: () -> Unit,
     onNotificationsClicked: () -> Unit,
@@ -368,6 +371,14 @@ fun AccountScreen(
                     onClick = { showPromoDialog = true },
                 ),
                 AccountRowSpec(
+                    title = tr(language, "Устройства", "Devices"),
+                    iconRes = R.drawable.settings_devices_icon,
+                    iconWidth = 25,
+                    iconHeight = 25,
+                    enabled = accountActionsEnabled,
+                    onClick = onDevicesClicked,
+                ),
+                AccountRowSpec(
                     title = tr(language, "Поддержка", "Support"),
                     iconRes = R.raw.account_support,
                     iconWidth = 22,
@@ -400,7 +411,7 @@ fun AccountScreen(
                 liveGlassEnabled = liveGlassEnabled,
                 modifier = Modifier
                     .width(metrics.dp(370f))
-                    .height(metrics.dp(329f)),
+                    .height(metrics.dp(383f)),
             )
         }
 
@@ -770,7 +781,17 @@ private fun AccountActionsPanel(
                             modifier = Modifier.width(accountDp(26f, scale)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            FigmaSvgAsset(
+                            if (LocalResources.current.getResourceTypeName(row.iconRes) == "drawable") {
+                                Icon(
+                                    painter = painterResource(row.iconRes),
+                                    contentDescription = null,
+                                    tint = AccountTextPrimary,
+                                    modifier = Modifier.size(
+                                        accountDp(row.iconWidth.toFloat(), scale),
+                                        accountDp(row.iconHeight.toFloat(), scale),
+                                    ),
+                                )
+                            } else FigmaSvgAsset(
                                 resId = row.iconRes,
                                 viewportWidth = row.iconWidth,
                                 viewportHeight = row.iconHeight,

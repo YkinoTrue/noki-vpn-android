@@ -114,7 +114,7 @@ object EndpointGroupPolicy {
 
     fun displayLabelFor(option: VpnEndpointOption): String {
         if (option.proxyType.equals("hysteria", ignoreCase = true) || normalizeTransport(option.transport) == "hysteria") {
-            return "Hysteria / UDP"
+            return "Hysteria2 / UDP"
         }
         val security = when (val normalized = option.security.lowercase(Locale.ROOT).ifBlank { "tls" }) {
             "tls" -> "TLS"

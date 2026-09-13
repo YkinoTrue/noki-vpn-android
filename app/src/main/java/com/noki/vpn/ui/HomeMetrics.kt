@@ -304,15 +304,17 @@ internal fun DrawScope.drawLatencyBars(scale: Float) {
 
 internal fun DrawScope.drawSessionTraffic(scale: Float) {
     val stroke = designDp(1.5f, scale).toPx()
-    drawRoundRect(
-        color = HomeAccentPrimary,
-        topLeft = Offset(size.width * 0.1f, size.height * 0.12f),
-        size = Size(size.width * 0.8f, size.height * 0.76f),
-        cornerRadius = CornerRadius(stroke, stroke),
-        style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
-    )
-    drawLine(HomeAccentPrimary, Offset(size.width * 0.1f, size.height * 0.5f),
-        Offset(size.width * 0.9f, size.height * 0.5f), strokeWidth = stroke)
+    fun arrow(x: Float, up: Boolean) {
+        val topY = size.height * 0.18f
+        val bottomY = size.height * 0.82f
+        val headY = if (up) topY else bottomY
+        val wingY = if (up) topY + size.height * 0.22f else bottomY - size.height * 0.22f
+        drawLine(HomeAccentPrimary, Offset(x, if (up) bottomY else topY), Offset(x, headY), stroke, StrokeCap.Round)
+        drawLine(HomeAccentPrimary, Offset(x, headY), Offset(x - size.width * 0.16f, wingY), stroke, StrokeCap.Round)
+        drawLine(HomeAccentPrimary, Offset(x, headY), Offset(x + size.width * 0.16f, wingY), stroke, StrokeCap.Round)
+    }
+    arrow(size.width * 0.34f, up = true)
+    arrow(size.width * 0.66f, up = false)
 }
 
 @Composable

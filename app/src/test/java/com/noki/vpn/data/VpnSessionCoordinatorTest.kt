@@ -14,6 +14,30 @@ import org.robolectric.annotation.Config
 @Config(sdk = [28])
 class VpnSessionCoordinatorTest {
     @Test
+    fun `manual catalog requests all protocols without changing selected settings`() = runBlocking {
+        val candidates = listOf(
+            tcpCandidate("reality").copy(security = "reality", publicKey = "public", shortId = "abcd"),
+            tcpCandidate("tls").copy(security = "tls"),
+            tcpCandidate("hy2").copy(proxyType = "hysteria", transport = "hysteria", security = "tls"),
+        )
+        val api = FakeVpnSessionApi(candidates = candidates)
+        val coordinator = VpnSessionCoordinator(
+            context = RuntimeEnvironment.getApplication(), repository = FakeVpnSessionStore(), backendApi = api,
+            deviceNameProvider = { "Phone" }, challengeSigner = { "signature" }, startupTcpPrecheck = { true },
+        )
+        for (protocol in listOf(VpnProtocol.REALITY, VpnProtocol.TLS)) {
+            val settings = DefaultStoredSettingsFactory.create().copy(
+                backendDeviceId = "device-id", backendDeviceKey = "device-key",
+                advancedSettings = AdvancedSettings(protocol = protocol, endpointSelectionMode = EndpointSelectionMode.MANUAL),
+            )
+            val result = coordinator.endpointOptions("token", settings)
+            assertEquals("auto", api.requestedProfileCode)
+            assertEquals(setOf("reality", "tls", "hy2"), result.endpointOptions.map { it.code }.toSet())
+            assertEquals(protocol, settings.advancedSettings.protocol)
+        }
+    }
+
+    @Test
     fun `failed TCP selection reports filters and empty profile before validation`() = runBlocking {
         val events = mutableListOf<String>()
         val candidates = listOf(
@@ -221,6 +245,7 @@ class VpnSessionCoordinatorTest {
         var countryCode: String? = null
         var locationCode: String? = null
         var nodeId: String? = null
+        var requestedProfileCode: String? = null
         val requests = mutableListOf<Pair<String?, String?>>()
 
         override suspend fun vpnAccess(
@@ -260,6 +285,7 @@ class VpnSessionCoordinatorTest {
             this.countryCode = countryCode
             this.locationCode = locationCode
             this.nodeId = nodeId
+            requestedProfileCode = profileCode
             requests += countryCode to locationCode
             if (rejectCountryRequest && countryCode != null && locationCode == null) {
                 throw BackendException("Location not found", 503)
@@ -290,7 +316,7 @@ class VpnSessionCoordinatorTest {
                 vpnSecret = "secret",
                 flow = null,
                 planCode = null,
-                endpointCandidates = candidates,
+                endpointCandidates = candidates.filter { profileCode == "auto" || it.security == profileCode },
             )
         }
     }

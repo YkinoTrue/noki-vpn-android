@@ -19,6 +19,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AccountPresentationPolicyTest {
+    @Test
+    fun renewalRequiresActivePaidTierRegardlessOfBillingCycle() {
+        val monthly = plan("plus-monthly", "plus", "Plus", null).copy(monthlyPriceRub = 250)
+        val yearly = monthly.copy(code = "plus-yearly", monthlyPriceRub = 2500)
+        val active = AppUiState(userProfile = UserProfile(
+            selectedPlanCodeRaw = monthly.code,
+            subscriptionStatus = "active",
+            subscriptionExpiresAt = java.time.Instant.now().plusSeconds(86400).toString(),
+        ))
+        assertTrue(canRenewPlan(monthly, active))
+        assertTrue(canRenewPlan(yearly, active))
+        assertTrue(canRenewPlan(monthly, active.copy(userProfile = active.userProfile.copy(selectedPlanCodeRaw = yearly.code))))
+        assertFalse(canRenewPlan(monthly.copy(code = "pro-monthly", tier = "pro"), active))
+        assertFalse(canRenewPlan(monthly, active.copy(userProfile = active.userProfile.copy(subscriptionStatus = "expired"))))
+        assertFalse(canRenewPlan(monthly, active.copy(userProfile = active.userProfile.copy(subscriptionExpiresAt = "2020-01-01T00:00:00Z"))))
+        assertFalse(canRenewPlan(monthly.copy(monthlyPriceRub = 0, tier = "free", code = "free"), active))
+    }
+
     private val today = LocalDate.of(2026, 7, 12)
 
     @Test

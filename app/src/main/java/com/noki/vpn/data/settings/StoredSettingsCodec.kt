@@ -8,10 +8,17 @@ internal class StoredSettingsCodec(
 ) {
     fun decode(raw: String?): StoredSettings {
         if (raw.isNullOrBlank()) return defaults()
-        return runCatching { decode(JSONObject(raw)) }.getOrElse { defaults() }
+        return runCatching {
+            val json = JSONObject(raw)
+            val stored = decode(json)
+            if (json.optInt("russianDirectDefaultsVersion") >= 1) stored else stored.copy(selectedPackages = DefaultStoredSettingsFactory.updatedDefaultPackages(
+                stored.selectedPackages, stored.filterMode,
+            ))
+        }.getOrElse { defaults() }
     }
 
     fun encode(settings: StoredSettings): String = JSONObject()
+        .put("russianDirectDefaultsVersion", 1)
         .put("remark", settings.profile.remark)
         .put("endpointCode", settings.profile.endpointCode)
         .put("proxyType", settings.profile.proxyType)

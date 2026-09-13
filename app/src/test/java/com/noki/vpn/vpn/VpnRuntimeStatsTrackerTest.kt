@@ -7,6 +7,28 @@ import org.junit.Test
 
 class VpnRuntimeStatsTrackerTest {
     @Test
+    fun `foreground latency request bypasses statistics interval and follows runtime owner`() {
+        val owner = RuntimeOwner(1L, 1L)
+        val tracker = VpnRuntimeStatsTracker(
+            currentDate = { LocalDate.of(2026, 9, 13) },
+            elapsedRealtime = { 1_000L },
+            readTraffic = { TrafficBytes(0L, 0L) },
+            latencyIntervalMillis = 300_000L,
+        )
+        assertEquals(null, tracker.requestLatencySample())
+        tracker.start(owner, "lv")
+        tracker.markLatencySample(owner)
+        val request = checkNotNull(tracker.requestLatencySample())
+        assertEquals("lv", request.locationCode)
+        assertEquals(owner, request.owner)
+        tracker.start(RuntimeOwner(2L, 2L), "de")
+        assertFalse(tracker.accepts(request))
+        assertEquals("de", tracker.requestLatencySample()?.locationCode)
+        tracker.clear(RuntimeOwner(2L, 2L))
+        assertEquals(null, tracker.requestLatencySample())
+    }
+
+    @Test
     fun `tracker owns periodic flush scheduling and cancellation`() {
         val scheduler = StatsScheduler()
         var scheduledFlushes = 0

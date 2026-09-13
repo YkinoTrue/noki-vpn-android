@@ -170,7 +170,9 @@ class VpnSessionCoordinator(
     ): EndpointOptionsResult = withContext(Dispatchers.IO) {
         val prepared = prepare(
             token = token,
-            settings = settings,
+            settings = settings.copy(
+                advancedSettings = settings.advancedSettings.copy(protocol = VpnProtocol.AUTO),
+            ),
             knownDevices = knownDevices,
             sessionSelection = VpnSessionSelection(
                 countryCode = settings.userProfile.selectedCountryCode,

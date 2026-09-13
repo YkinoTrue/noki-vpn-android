@@ -661,6 +661,7 @@ internal fun PaymentResultDialog(
 internal fun PlanCheckoutScreen(
     plan: PlanSummary,
     currentPlanTitle: String,
+    renewsCurrentPlan: Boolean,
     cycle: BillingCycle,
     language: AppLanguage,
     onCycleChanged: (BillingCycle) -> Unit,
@@ -862,9 +863,13 @@ internal fun PlanCheckoutScreen(
             )
         }
         SettingsText(
-            text = tr(language,
-                "После оплаты тариф изменится сразу. Оставшийся срок не складывается с новым, текущий тариф будет заменён.",
-                "The plan changes immediately after payment. Remaining time is not added to the new term, the current plan is replaced."),
+            text = if (renewsCurrentPlan) {
+                tr(language, "После оплаты тариф применится сразу. Оставшийся срок складывается с новым", "After payment, the plan applies immediately. Remaining time is added to the new period.")
+            } else {
+                tr(language,
+                    "После оплаты тариф изменится сразу. Оставшийся срок не складывается с новым, текущий тариф будет заменён.",
+                    "The plan changes immediately after payment. Remaining time is not added to the new term, the current plan is replaced.")
+            },
             textAlign = TextAlign.Start,
             fontSize = 11f, lineHeight = 16f, letterSpacing = 0f,
             color = SettingsTextSecondary, scale = scale,
@@ -889,6 +894,15 @@ internal fun checkoutPlanForCycle(
             candidate.tier.equals(selected.tier, ignoreCase = true)
         }
     } ?: selected
+}
+
+internal fun canRenewPlan(plan: PlanSummary, state: AppUiState): Boolean {
+    if (plan.monthlyPriceRub <= 0 || plan.tier.equals("free", true) ||
+        !state.userProfile.subscriptionStatus.equals("active", true) || !isCurrentPlan(plan, state)) return false
+    val expiresAt = runCatching {
+        java.time.OffsetDateTime.parse(state.userProfile.subscriptionExpiresAt).toInstant()
+    }.getOrNull() ?: return false
+    return expiresAt.isAfter(java.time.Instant.now())
 }
 
 internal fun isCurrentPlan(

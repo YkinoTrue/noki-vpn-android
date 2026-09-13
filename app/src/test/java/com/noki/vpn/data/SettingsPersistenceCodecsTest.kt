@@ -38,8 +38,7 @@ class SettingsPersistenceCodecsTest {
         val fresh = settingsCodec.decode(null)
 
         assertEquals(AppFilterMode.ALL_EXCEPT_SELECTED, fresh.filterMode)
-        assertEquals(
-            setOf(
+        val legacy = setOf(
                 "ru.rostel",
                 "ru.sberbankmobile",
                 "com.idamob.tinkoff.android",
@@ -62,9 +61,16 @@ class SettingsPersistenceCodecsTest {
                 "ru.mail.mailapp",
                 "ru.rutube.app",
                 "ru.sbcs.store",
-            ),
-            fresh.selectedPackages,
-        )
+            )
+        assertTrue(fresh.selectedPackages.containsAll(legacy))
+        assertTrue(fresh.selectedPackages.containsAll(setOf("ru.oneme.app", "com.vk.vkvideo", "ru.mts.mymts", "com.logistic.sdek")))
+        val legacyPayload = org.json.JSONObject(settingsCodec.encode(fresh.copy(selectedPackages = legacy)))
+            .apply { remove("russianDirectDefaultsVersion") }.toString()
+        assertEquals(fresh.selectedPackages, settingsCodec.decode(legacyPayload).selectedPackages)
+        assertEquals(legacy, settingsCodec.decode(settingsCodec.encode(fresh.copy(selectedPackages = legacy))).selectedPackages)
+        val custom = setOf("com.example.app")
+        assertEquals(custom, settingsCodec.decode(settingsCodec.encode(fresh.copy(selectedPackages = custom))).selectedPackages)
+        assertEquals(emptySet<String>(), settingsCodec.decode(settingsCodec.encode(fresh.copy(selectedPackages = emptySet()))).selectedPackages)
         assertEquals(
             listOf("geosite:category-ru"),
             fresh.advancedSettings.bypassDomains,

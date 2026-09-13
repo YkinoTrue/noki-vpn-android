@@ -167,6 +167,7 @@ fun PlansScreen(
                         PlanCheckoutScreen(
                             plan = checkoutPlan,
                             currentPlanTitle = currentPlanTitle,
+                            renewsCurrentPlan = canRenewPlan(checkoutPlan, state),
                             cycle = cycle,
                             language = language,
                             onCycleChanged = viewModel::setBillingCycle,
@@ -257,7 +258,7 @@ fun PlansScreen(
 
                             if (selectedPlan.monthlyPriceRub > 0 && !state.currentDeviceAccessRole.equals("invited", true)) {
                                 PlanActionButton(
-                                    text = if (isCurrentPlan(selectedPlan, state)) {
+                                    text = if (canRenewPlan(selectedPlan, state)) {
                                         tr(language, "Продлить", "Renew")
                                     } else {
                                         tr(language, "Подключить", "Subscribe")

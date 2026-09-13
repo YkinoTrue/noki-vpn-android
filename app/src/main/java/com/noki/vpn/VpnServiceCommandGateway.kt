@@ -15,6 +15,10 @@ internal interface VpnServiceCommandGateway {
 internal class AndroidVpnServiceCommandGateway(
     private val context: Context,
 ) : VpnServiceCommandGateway {
+    fun refreshLatency() {
+        context.startService(AppVpnService.queryStateIntent(context, refreshLatency = true))
+    }
+
     override fun start() {
         context.startForegroundService(AppVpnService.startIntent(context, refreshSession = true))
     }

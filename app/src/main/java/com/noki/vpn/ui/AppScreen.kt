@@ -407,6 +407,7 @@ fun AppScreen(
                                 openSharedDestination(AppDestination.PERSONALIZATION)
                             },
                             onPlansClicked = { openSharedDestination(AppDestination.PLANS) },
+                            onDevicesClicked = { openSharedDestination(AppDestination.DEVICES) },
                             onSupportClicked = { openSharedDestination(AppDestination.SUPPORT) },
                             onSecurityClicked = { openSharedDestination(AppDestination.SECURITY) },
                             onNotificationsClicked = viewModel::openAppNotificationHistory,
