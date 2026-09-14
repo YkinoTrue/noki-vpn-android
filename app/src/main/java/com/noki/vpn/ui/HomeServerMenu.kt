@@ -286,7 +286,11 @@ internal fun Modifier.homeServerItemGlassSurface(
         } else {
             SettingsTextMuted.copy(alpha = NokiUiKitPolicy.homeServerLazyItemSurfaceAlpha)
         },
-        simpleSurfaceColor = if (selected) androidx.compose.ui.graphics.lerp(SettingsBgSoft, HomeAccentPrimary, 0.10f) else SettingsBgSoft,
+        simpleSurfaceColor = androidx.compose.ui.graphics.lerp(
+            SettingsBgSoft,
+            if (selected) HomeAccentPrimary else HomeTextPrimary,
+            if (selected) 0.18f else 0.07f,
+        ),
         layerBlock = layerBlock,
     )
 }

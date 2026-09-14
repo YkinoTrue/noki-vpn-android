@@ -242,7 +242,7 @@ class AppVpnService : VpnService() {
             nowMillis = SystemClock::elapsedRealtime,
             launchProbe = ::launchWatchdogProbe,
             isLockdown = {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isLockdownEnabled
+                shouldBlockDirectTraffic()
             },
             evidenceFreshMillis = DATA_PATH_EVIDENCE_FRESH_MS,
         )
@@ -904,12 +904,16 @@ class AppVpnService : VpnService() {
             failStart(repository, "interface_error")
             return@withLifecycleLock
         }
+        val previousTunnel = tunnel
+        tunnel = established
+        if (previousTunnel !== established) previousTunnel?.close()
         if (!connectionOrchestrator.isCurrent(generationId)) {
-            runCatching { established.close() }
+            if (!shouldBlockDirectTraffic()) {
+                tunnel = null
+                runCatching { established.close() }
+            }
             return@withLifecycleLock
         }
-
-        tunnel = established
         connectionOrchestrator.updateUnderlay(underlyingSnapshot)
         recordDiagnostic(
             repository = repository,
@@ -949,15 +953,19 @@ class AppVpnService : VpnService() {
             )
             if (!connectionOrchestrator.isCurrent(generationId)) {
                 connectionOrchestrator.stopXray()
-                if (tunnel === established) tunnel = null
-                runCatching { established.close() }
+                if (!shouldBlockDirectTraffic()) {
+                    if (tunnel === established) tunnel = null
+                    runCatching { established.close() }
+                }
                 return@withLifecycleLock
             }
             val readinessLatencyMs = if (started) measureRuntimeReadiness(recovery = true) else null
             if (!connectionOrchestrator.isCurrent(generationId) || !currentCoroutineContext().isActive) {
                 connectionOrchestrator.stopXray()
-                if (tunnel === established) tunnel = null
-                runCatching { established.close() }
+                if (!shouldBlockDirectTraffic()) {
+                    if (tunnel === established) tunnel = null
+                    runCatching { established.close() }
+                }
                 return@withLifecycleLock
             }
             val failureReason = VpnReadinessPolicy.failureReason(started, readinessLatencyMs)
@@ -1835,22 +1843,26 @@ class AppVpnService : VpnService() {
     }
 
     private fun isActiveLockdownRecovery(): Boolean {
-        return lockdownRecoveryActive &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            isLockdownEnabled
+        return lockdownRecoveryActive && shouldBlockDirectTraffic()
     }
+
+    private fun shouldBlockDirectTraffic(): Boolean =
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isLockdownEnabled) ||
+            (currentRuntimeMode == VpnRuntimeMode.ACCOUNT &&
+                SettingsRepository(this).load().advancedSettings.killSwitchEnabled)
 
     private fun enterTruthfulLockdownFailure(
         repository: SettingsRepository,
         reason: String,
         retryDelayMillis: Long = watchdogController.lockdownRetryDelayMillis(),
     ) {
+        connectionOrchestrator.pauseConnectedSidecars()
         lockdownRecoveryActive = true
         repository.recordAppLog(
             category = "vpn",
             level = "error",
             message = reason,
-            details = "android_lockdown_blocks_direct_traffic=true",
+            details = "direct_traffic_blocked=true",
             errorType = reason,
             serverCountry = notificationServerLabel,
             connectionSuccess = false,
@@ -1860,7 +1872,7 @@ class AppVpnService : VpnService() {
             NOTIFICATION_ID,
             createNotification(
                 title = "VPN недоступен",
-                text = "Android lockdown блокирует трафик. Повторное подключение будет выполнено позже.",
+                text = "Трафик VPN заблокирован. Ожидаем повторного подключения.",
                 showActions = true,
             ),
         )
@@ -2087,6 +2099,11 @@ class AppVpnService : VpnService() {
             endpointRating = endpointRating,
         )
         warmupController.clear()
+        if (tunnel != null && shouldBlockDirectTraffic()) {
+            connectionOrchestrator.stopXray()
+            enterTruthfulLockdownFailure(repository, reason)
+            return
+        }
         connectionOrchestrator.releaseResourcesWhileOwned(VpnConnectionState.FAILED)
         connectedAtMillis = null
         repository.clearVpnRuntimeState()
@@ -2147,7 +2164,7 @@ class AppVpnService : VpnService() {
         settings: StoredSettings,
         reason: String,
     ) {
-        val isLockdown = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isLockdownEnabled
+        val isLockdown = tunnel != null && shouldBlockDirectTraffic()
         when (ConnectedWatchdogPolicy.exhaustedRecoveryDecision(isLockdown)) {
             ConnectedWatchdogPolicy.ExhaustedRecoveryDecision.ReportLockdownBlockedAndRetry -> {
                 connectionOrchestrator.stopXray()
@@ -2262,7 +2279,10 @@ class AppVpnService : VpnService() {
     ) {
         cancelDelayedVpnCallbacks()
         warmupController.clear()
-        connectionOrchestrator.releaseResourcesWhileOwned(finalState)
+        connectionOrchestrator.releaseResourcesWhileOwned(
+            finalState,
+            retainTunnel = finalState == null && shouldBlockDirectTraffic(),
+        )
         connectedAtMillis = null
         repository.clearVpnRuntimeState()
         if (removeForeground) stopForeground(STOP_FOREGROUND_REMOVE)

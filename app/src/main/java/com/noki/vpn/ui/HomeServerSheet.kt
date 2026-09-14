@@ -15,6 +15,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +47,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -350,6 +353,24 @@ internal fun NokiGlassSheetOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(visible, sheetDismissThresholdPx) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        var position = down.position
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            position = change.position
+                        } while (event.changes.any { it.pressed })
+                        val displacement = position - down.position
+                        // Observe the whole sheet, including drags consumed by its list.
+                        // The handle keeps its interactive drag/settle animation.
+                        if (sheetDragOffset.value == 0f &&
+                            -displacement.y >= sheetDismissThresholdPx &&
+                            -displacement.y > kotlin.math.abs(displacement.x)
+                        ) onCollapse()
+                    }
+                }
                 .clickable(
                     interactionSource = passthroughBlockerInteractionSource,
                     indication = null,

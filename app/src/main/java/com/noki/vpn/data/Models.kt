@@ -243,6 +243,7 @@ data class AdvancedSettings(
     val errorLogsEnabled: Boolean = true,
     val anonymousLogsEnabled: Boolean = false,
     val youtubeDirectDpiEnabled: Boolean = false,
+    val killSwitchEnabled: Boolean = false,
     val alwaysOnDomains: List<String> = emptyList(),
     val bypassDomains: List<String> = emptyList(),
 )

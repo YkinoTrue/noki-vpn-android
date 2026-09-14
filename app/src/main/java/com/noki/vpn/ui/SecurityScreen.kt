@@ -2,12 +2,17 @@ package com.noki.vpn.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,11 +21,33 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Text
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.style.TextDecoration
+import com.noki.vpn.BuildConfig
+import com.noki.vpn.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.text.PlatformTextStyle
@@ -65,6 +92,7 @@ fun SecurityScreen(
     liveGlassEnabled: Boolean = true,
     showBackground: Boolean = true,
 ) {
+    var showAbout by rememberSaveable { mutableStateOf(false) }
     CompositionLocalProvider(LocalTextStyle provides SecurityNoFontPaddingTextStyle) {
         BackHandler(
             enabled = state.accountSecurityState.action is AccountSecurityActionState.Username,
@@ -227,7 +255,7 @@ fun SecurityScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(metrics.dp(60f)),
-                        onClick = {},
+                        onClick = { showAbout = true },
                     )
 
                     SecurityAndroidVersionBlock(
@@ -248,6 +276,13 @@ fun SecurityScreen(
                     backdrop = backdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     onDismiss = viewModel::dismissDialog,
+                )
+            }
+            if (showAbout) {
+                SecurityAboutSheet(
+                    language = language,
+                    metrics = metrics,
+                    onDismiss = { showAbout = false },
                 )
             }
             TelegramLoginStateReducer.errorMessage(
@@ -308,6 +343,72 @@ fun SecurityScreen(
                     onDismiss = viewModel::dismissAccountUsernameDialog,
                     onConfirm = viewModel::submitAccountUsername,
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SecurityAboutSheet(
+    language: com.noki.vpn.data.AppLanguage,
+    metrics: NokiAdaptiveMetrics,
+    onDismiss: () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = SecurityBgLighter,
+        contentColor = SecurityTextPrimary,
+        shape = RoundedCornerShape(topStart = metrics.dp(32f), topEnd = metrics.dp(32f)),
+        dragHandle = {
+            Box(Modifier.padding(vertical = metrics.dp(14f))
+                .width(metrics.dp(165f)).height(metrics.dp(4f))
+                .background(SecurityTextSecondary, RoundedCornerShape(50)))
+        },
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().heightIn(min = metrics.dp(340f))
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = metrics.dp(24f), vertical = metrics.dp(22f)),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(metrics.dp(18f)),
+        ) {
+            Column(horizontalAlignment = Alignment.End) {
+                FigmaSvgAsset(
+                    resId = R.raw.noki_logo,
+                    viewportWidth = 197,
+                    viewportHeight = 76,
+                    modifier = Modifier.width(metrics.dp(197f)).height(metrics.dp(76f)),
+                )
+                Text(tr(language, "версия ${BuildConfig.VERSION_NAME}", "version ${BuildConfig.VERSION_NAME}"),
+                    fontFamily = ManropeFontFamily, fontSize = metrics.sp(10f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(metrics.dp(20f))) {
+                IconButton(onClick = { uriHandler.openUri("https://noki.ykino.tech") }) {
+                    Canvas(Modifier.size(metrics.dp(28f)).semantics {
+                        contentDescription = tr(language, "Сайт Noki", "Noki website")
+                    }) {
+                        val stroke = Stroke(1.6.dp.toPx())
+                        drawCircle(SecurityTextPrimary, style = stroke)
+                        drawOval(SecurityTextPrimary, topLeft = Offset(size.width * 0.25f, 0f),
+                            size = Size(size.width * 0.5f, size.height), style = stroke)
+                        drawLine(SecurityTextPrimary, Offset(0f, center.y), Offset(size.width, center.y), stroke.width)
+                    }
+                }
+                IconButton(onClick = { uriHandler.openUri("https://t.me/nokivpn") }) {
+                    Icon(painterResource(R.drawable.support_telegram), contentDescription = "Telegram",
+                        modifier = Modifier.size(metrics.dp(28f)), tint = SecurityTextPrimary)
+                }
+            }
+            listOf(
+                tr(language, "Условия использования", "Terms of use") to "https://noki.ykino.tech/legal/terms",
+                tr(language, "Политика конфиденциальности", "Privacy policy") to "https://noki.ykino.tech/legal/privacy",
+            ).forEach { (label, url) ->
+                Text(label, fontFamily = ManropeFontFamily, fontSize = metrics.sp(14f),
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable { uriHandler.openUri(url) }.padding(vertical = metrics.dp(8f)))
             }
         }
     }

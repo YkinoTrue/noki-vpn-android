@@ -24,6 +24,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsSelected
@@ -57,6 +59,59 @@ import org.robolectric.annotation.GraphicsMode
 class AdaptiveScreenLayoutTest {
     @get:Rule val compose = createEmptyComposeRule()
     private lateinit var activity: ComponentActivity
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-xxhdpi")
+    fun avatarGalleryLabelFitsItsMenu() = render {
+        PersonalizationAvatarMenu(AppLanguage.RU, null, false, true, {}, {}, Modifier)
+    }.use {
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithText("Выбрать из галереи", useUnmergedTree = true)
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        saveImage("avatar-menu")
+        val layout = layouts.single()
+        assertTrue("Gallery label must not be ellipsized", !layout.isLineEllipsized(0))
+        assertEquals("Every character must remain visible", layout.layoutInput.text.length, layout.getLineEnd(0, visibleEnd = true))
+    }
+
+    @Test
+    fun statisticsDayShowsTrafficAndGroupIsCentered() = render {
+        StatsScreen(russianState(), liveGlassEnabled = false, showBackground = false)
+    }.use {
+        val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val today = compose.onNodeWithText("Сегодня").fetchSemanticsNode().boundsInRoot
+        val year = compose.onNodeWithText("Год").fetchSemanticsNode().boundsInRoot
+        assertEquals(root.center.x, (today.left + year.right) / 2f, 12f)
+        compose.onNodeWithContentDescription("Пн: 0 МБ").performClick()
+        compose.onNodeWithText("Пн\n0 МБ").assertIsDisplayed()
+        Unit
+    }
+
+    @Test
+    fun serverSheetClosesFromListContent() {
+        var collapsed = false
+        render {
+            HomeServerDropdownOverlay(Modifier.fillMaxSize(), true, 1f, AppLanguage.RU,
+                emptyList(), null, null, false, false, { collapsed = true }, { _, _ -> },
+                com.noki.vpn.data.UserProfile())
+        }.use {
+            compose.onNodeWithText("Автовыбор").assertIsDisplayed()
+            compose.onRoot().performTouchInput { swipeUp(startY = height * 0.6f, endY = height * 0.2f) }
+            assertTrue("Swipe inside the list must close the sheet", collapsed)
+        }
+    }
+
+    @Test
+    fun securityAboutSheetShowsCurrentVersionAndLinks() = render {
+        SecurityAboutSheet(AppLanguage.RU, nokiAdaptiveMetrics(512.dp), {})
+    }.use {
+        compose.onNodeWithText("версия ${com.noki.vpn.BuildConfig.VERSION_NAME}").assertIsDisplayed()
+        compose.onNodeWithText("Условия использования").assertIsDisplayed()
+        compose.onNodeWithText("Политика конфиденциальности").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Telegram").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Сайт Noki").assertIsDisplayed()
+        Unit
+    }
 
     @Test
     fun tallHomeKeepsControlsAboveNavigation() = renderHome().use {

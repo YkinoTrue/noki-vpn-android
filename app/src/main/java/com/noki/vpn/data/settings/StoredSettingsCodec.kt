@@ -83,6 +83,7 @@ internal class StoredSettingsCodec(
         .put("anonymousLogsEnabled", settings.advancedSettings.anonymousLogsEnabled)
         .put("anonymousLogConsentVersion", 1)
         .put("youtubeDirectDpiEnabled", settings.advancedSettings.youtubeDirectDpiEnabled)
+        .put("killSwitchEnabled", settings.advancedSettings.killSwitchEnabled)
         .put("alwaysOnDomains", JSONArray(settings.advancedSettings.alwaysOnDomains))
         .put("bypassDomains", JSONArray(settings.advancedSettings.bypassDomains))
         .put("endpointOptions", encodeEndpointOptions(settings.endpointOptions))
@@ -194,6 +195,7 @@ internal class StoredSettingsCodec(
                 json.optInt("anonymousLogConsentVersion", 0) >= 1 &&
                     json.optBoolean("anonymousLogsEnabled", false),
             youtubeDirectDpiEnabled = json.optBoolean("youtubeDirectDpiEnabled", false),
+            killSwitchEnabled = json.optBoolean("killSwitchEnabled", false),
             alwaysOnDomains = DefaultStoredSettingsFactory.normalizeAlwaysOnDomains(
                 json.optJSONArray("alwaysOnDomains").toStringList(),
             ),

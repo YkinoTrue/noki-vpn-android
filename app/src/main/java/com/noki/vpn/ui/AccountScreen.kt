@@ -964,8 +964,8 @@ private fun AccountNotificationHistory(
                         SettingsText(
                             text = tr(
                                 language,
-                                "Здесь появится история уведомлений, полученных на этом устройстве.",
-                                "Notifications received on this device will appear here.",
+                                "Пока тут пусто",
+                                "Nothing here yet",
                             ),
                             color = AccountTextSecondary,
                             fontSize = 14f,

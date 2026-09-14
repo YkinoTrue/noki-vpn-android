@@ -3,6 +3,7 @@ package com.noki.vpn.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +29,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +45,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.sp
 import com.noki.vpn.AppUiState
 import com.noki.vpn.data.AppLanguage
@@ -131,11 +138,14 @@ fun StatsScreen(
 
             Column(
                 modifier = Modifier
-                    .offset(x = panelX, y = contentTop)
+                    .align(Alignment.TopCenter)
+                    .offset(y = contentTop)
                     .width(panelWidth)
                     .height((bottomNavTop - contentTop).coerceAtLeast(0.dp))
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = metrics.dp(24f)),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 StatsPeriodSelector(
                     selectedPeriod = selectedPeriod,
@@ -276,6 +286,7 @@ private fun StatsDateCard(
 
         StatsUsageChart(
             bars = weeklyBars,
+            language = language,
         )
     }
 }
@@ -317,9 +328,12 @@ private fun StatsMetricCard(
 @Composable
 private fun StatsUsageChart(
     bars: List<StatsChartBar>,
+    language: AppLanguage,
 ) {
     val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val maxValue = bars.maxOfOrNull { it.bytes }?.coerceAtLeast(1L) ?: 1L
+    var selectedBar by remember(bars) { mutableStateOf<StatsChartBar?>(null) }
+    val popupOffset = with(LocalDensity.current) { metrics.dp(58f).roundToPx() }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -340,6 +354,10 @@ private fun StatsUsageChart(
                     modifier = Modifier
                         .width(metrics.dp(24f))
                         .height(barHeight)
+                        .semantics { contentDescription = "${bar.label}: ${formatStatsBytes(bar.bytes, language)}" }
+                        .clickable { selectedBar = bar }
+                ) {
+                    Box(Modifier.fillMaxSize()
                         .clip(RoundedCornerShape(metrics.dp(8f)))
                         .background(
                             if (bar.isToday) {
@@ -351,8 +369,36 @@ private fun StatsUsageChart(
                                     listOf(Color(0xE6264250), Color(0x595B7180)),
                                 )
                             },
-                        ),
-                )
+                        ))
+                    if (selectedBar == bar) {
+                        Popup(
+                            alignment = Alignment.TopCenter,
+                            offset = IntOffset(0, -popupOffset),
+                            onDismissRequest = { selectedBar = null },
+                            properties = PopupProperties(focusable = true),
+                        ) {
+                            Box(
+                                Modifier.nokiSettingsPanelGlassSurface(
+                                    shape = RoundedCornerShape(metrics.dp(15f)),
+                                    backdrop = null,
+                                    liveGlassEnabled = false,
+                                    scale = metrics.contentScale,
+                                    elevationDp = 8f,
+                                    shadowAlpha = 0.25f,
+                                    surfaceColor = StatsBgLighter.copy(alpha = 0.80f),
+                                ).padding(horizontal = metrics.dp(16f), vertical = metrics.dp(12f)),
+                            ) {
+                                StatsText(
+                                    text = "${bar.label}\n${formatStatsBytes(bar.bytes, language)}",
+                                    fontSize = 12f,
+                                    lineHeight = 16f,
+                                    color = StatsTextPrimary,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
         Row(

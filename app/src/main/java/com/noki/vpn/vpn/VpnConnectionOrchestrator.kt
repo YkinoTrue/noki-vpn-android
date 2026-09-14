@@ -225,13 +225,15 @@ internal class VpnConnectionOrchestrator(
         }
     }
 
-    fun releaseResourcesWhileOwned(finalState: VpnConnectionState?) {
+    fun releaseResourcesWhileOwned(finalState: VpnConnectionState?, retainTunnel: Boolean = false) {
         pauseConnectedSidecars()
         xray.stop()
-        tunnel?.close()
-        tunnel = null
-        activeSettings = null
-        activeUnderlay = null
+        if (!retainTunnel) {
+            tunnel?.close()
+            tunnel = null
+            activeSettings = null
+            activeUnderlay = null
+        }
         if (finalState != null) currentState = finalState
     }
 
