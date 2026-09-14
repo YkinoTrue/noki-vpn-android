@@ -154,19 +154,6 @@ fun AdvancedSettingsScreen(
                     },
                 )
 
-                Spacer(modifier = Modifier.height(metrics.dp(25f)))
-                AdvancedToggleCard(
-                    enabled = state.advancedSettings.killSwitchEnabled,
-                    title = "Kill-switch",
-                    backdrop = surfaceBackdrop,
-                    liveGlassEnabled = liveGlassEnabled,
-                    modifier = Modifier
-                        .widthIn(max = metrics.dp(370f))
-                        .fillMaxWidth()
-                        .height(metrics.dp(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp)),
-                    onEnabledChanged = viewModel::setKillSwitchEnabled,
-                )
-
                 if (!autoEndpointSelection) {
                     Spacer(modifier = Modifier.height(metrics.dp(25f)))
 
@@ -187,6 +174,19 @@ fun AdvancedSettingsScreen(
                         },
                     )
                 }
+
+                Spacer(modifier = Modifier.height(metrics.dp(25f)))
+                AdvancedToggleCard(
+                    enabled = state.advancedSettings.killSwitchEnabled,
+                    title = "Kill-switch",
+                    backdrop = surfaceBackdrop,
+                    liveGlassEnabled = liveGlassEnabled,
+                    modifier = Modifier
+                        .widthIn(max = metrics.dp(370f))
+                        .fillMaxWidth()
+                        .height(metrics.dp(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp)),
+                    onEnabledChanged = viewModel::setKillSwitchEnabled,
+                )
 
                 Spacer(modifier = Modifier.height(metrics.dp(25f)))
 

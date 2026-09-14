@@ -146,6 +146,23 @@ class BootstrapStateMapperTest {
         )
 
     @Test
+    fun `country names use admin translation independently of current server load`() {
+        val named = location("us-1", "US", 80).copy(nameRu = " США ", nameEn = " USA ")
+        val other = location("us-2", "US", 10).copy(nameRu = "Другое имя", nameEn = "Other name")
+        for ((language, expected) in listOf(AppLanguage.RU to "США", AppLanguage.EN to "USA")) {
+            for (catalog in listOf(listOf(named, other), listOf(named.copy(isOnline = false), other))) {
+                val row = BootstrapStateMapper.mapLocations(catalog, language, emptyMap()).single()
+                assertEquals(expected, row.country)
+                assertEquals("US", row.countryCode)
+                assertEquals("us-2.example.com", row.host)
+            }
+        }
+        val blank = named.copy(nameRu = " ", nameEn = null)
+        assertEquals("Другое имя", BootstrapStateMapper.mapLocations(listOf(blank, other), AppLanguage.RU, emptyMap()).single().country)
+        assertEquals("United States", BootstrapStateMapper.mapLocations(listOf(blank), AppLanguage.EN, emptyMap()).single().country)
+    }
+
+    @Test
     fun `locations with the same country code become one country row`() {
         val rows = BootstrapStateMapper.mapLocations(
             locations = listOf(
