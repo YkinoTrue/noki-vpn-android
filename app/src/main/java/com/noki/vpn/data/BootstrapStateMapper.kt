@@ -158,7 +158,10 @@ object BootstrapStateMapper {
             ServerLocation(
                 code = countryCode,
                 countryCode = countryCode,
-                country = Locale("", countryCode).getDisplayCountry(Locale(language.tag)).ifBlank { countryCode },
+                country = members.firstNotNullOfOrNull { location ->
+                    (if (language == AppLanguage.RU) location.nameRu else location.nameEn)
+                        ?.trim()?.takeIf { it.isNotEmpty() }
+                } ?: Locale("", countryCode).getDisplayCountry(Locale(language.tag)).ifBlank { countryCode },
                 city = "",
                 host = representative.entryHost,
                 capacityMbps = capacities.takeIf { it.isNotEmpty() }?.sum(),

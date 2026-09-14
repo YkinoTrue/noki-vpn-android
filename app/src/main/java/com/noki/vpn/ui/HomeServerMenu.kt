@@ -147,7 +147,7 @@ internal fun HomeServerMenuItem(
     onExpand: (() -> Unit)? = null,
 ) {
     val isServerRow = location != null && title != null
-    val countryText = title ?: location?.let { localizedServerCountry(it, language) }.orEmpty()
+    val countryText = title ?: location?.country.orEmpty()
     val latencyText = latencyMs?.let { "$it " + tr(language, "мс", "ms") } ?: "—"
     val markerSize = if (isServerRow) 32f else 46f
     val interactionSource = remember { MutableInteractionSource() }
@@ -416,9 +416,3 @@ internal fun countryMarkerCode(location: ServerLocation): String? {
 
 internal fun countryFlagResourceName(location: ServerLocation): String? =
     countryMarkerCode(location)?.let { code -> "flag_${code.lowercase(Locale.ROOT)}" }
-
-internal fun localizedServerCountry(location: ServerLocation, language: AppLanguage): String {
-    val code = countryMarkerCode(location) ?: location.code.trim().uppercase(Locale.ROOT)
-    return Locale("", code).getDisplayCountry(Locale.forLanguageTag(language.tag))
-        .takeIf { it.isNotBlank() && !it.equals(code, true) } ?: location.country
-}

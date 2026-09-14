@@ -304,10 +304,10 @@ fun HomeScreen(
                     liveGlassEnabled = effectiveLiveGlassEnabled,
                     country = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
                         tr(language, "Автовыбор", "Automatic")
-                    } else selectedLocation?.let { localizedServerCountry(it, language) }
+                    } else selectedLocation?.country
                         ?: tr(language, "Нет сервера", "No server"),
                     subtitle = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
-                        selectedLocation?.let { localizedServerCountry(it, language) }
+                        selectedLocation?.country
                     } else if (state.userProfile.serverSelectionMode == ServerSelectionMode.SERVER) {
                         selectedServer?.name
                     } else null,
@@ -386,7 +386,7 @@ fun HomeScreen(
                 val serverName = when (dialog.mode) {
                     ServerSelectionMode.AUTO -> tr(language, "Автовыбор", "Automatic")
                     ServerSelectionMode.COUNTRY -> state.locations.firstOrNull { it.code.equals(code, true) }
-                        ?.let { localizedServerCountry(it, language) } ?: code
+                        ?.country ?: code
                     ServerSelectionMode.SERVER -> state.locations.flatMap { it.servers }
                         .firstOrNull { it.id == code }?.name ?: tr(language, "Сервер недоступен", "Server unavailable")
                 }
