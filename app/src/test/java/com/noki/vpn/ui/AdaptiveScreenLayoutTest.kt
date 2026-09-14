@@ -110,7 +110,10 @@ class AdaptiveScreenLayoutTest {
         compose.onNodeWithText("Политика конфиденциальности").assertIsDisplayed()
         compose.onNodeWithContentDescription("Telegram").assertIsDisplayed()
         compose.onNodeWithContentDescription("Сайт Noki").assertIsDisplayed()
-        Unit
+        compose.onNode(androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(
+            androidx.compose.ui.semantics.SemanticsActions.Expand,
+        )).assertDoesNotExist()
+        saveImage("security-about", includeDialogs = true)
     }
 
     @Test
@@ -503,11 +506,15 @@ class AdaptiveScreenLayoutTest {
         return AutoCloseable { controller.pause().stop().destroy() }
     }
 
-    private fun saveImage(name: String) {
+    private fun saveImage(name: String, includeDialogs: Boolean = false) {
         val directory = File("build-compose-2026/reports/ui-layout").apply { mkdirs() }
         File(directory, "$name.png").outputStream().use { output ->
             compose.runOnIdle {
-                val view = activity.window.decorView
+                val view = if (includeDialogs) {
+                    org.robolectric.shadow.api.Shadow.extract<org.robolectric.shadows.ShadowWindowManagerImpl>(
+                        activity.windowManager,
+                    ).views.last()
+                } else activity.window.decorView
                 val bitmap = android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
                 view.draw(android.graphics.Canvas(bitmap))
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
