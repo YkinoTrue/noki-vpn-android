@@ -56,6 +56,14 @@ class MainViewModel(
 
     fun installAndroidUpdate() = runtime.installAndroidUpdate()
 
+    internal suspend fun observeDownloadedAndroidUpdates() {
+        runtime.androidUpdateCoordinator.observeDownloads().collect {
+            if (runtime.uiState.isReady && runtime.uiState.isAuthenticated) {
+                runtime.androidUpdateCoordinator.launchReadyUpdate(explicit = false)
+            }
+        }
+    }
+
     fun showCurrentDeviceAccessDenied() = runtime.showCurrentDeviceAccessDenied()
 
     fun showVpnConflict() = runtime.showVpnConflict()

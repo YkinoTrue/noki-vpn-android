@@ -122,7 +122,9 @@ internal fun SecurityAndroidVersionBlock(
         }
         if (update != null) {
             SecurityGlassActionButton(
-                text = if (updateState.isDownloading) {
+                text = if (updateState.isReadyToInstall) {
+                    tr(language, "Установить обновление", "Install update")
+                } else if (updateState.isDownloading) {
                     tr(language, "Скачивание", "Downloading")
                 } else {
                     tr(language, "Обновить приложение", "Update app")

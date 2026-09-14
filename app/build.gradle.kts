@@ -39,8 +39,8 @@ val googleWebClientId = providers.gradleProperty("noki.googleWebClientId")
     .get()
 val libv2rayAarFile = layout.projectDirectory.file("libs/libv2ray.aar")
 val libv2rayAarSha256 = "CF1D829174C12CD4781725DDDF30347A9231014F18684619208521EBD5B020D4"
-val expectedReleaseVersionCode = 233
-val expectedReleaseVersionName = "1.0.6"
+val expectedReleaseVersionCode = 234
+val expectedReleaseVersionName = "1.0.7"
 
 fun String.toBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -269,6 +269,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.work:work-runtime-ktx:2.11.2")
+    testImplementation("androidx.work:work-testing:2.11.2")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")

@@ -73,7 +73,7 @@ internal object BackendSyncStateReducer {
         val androidUpdate = if (
             preserveAndroidUpdate ||
             latest.androidUpdate.isChecking ||
-            latest.androidUpdate.isDownloading
+            latest.androidUpdate.isDownloading || latest.androidUpdate.isReadyToInstall
         ) {
             latest.androidUpdate
         } else {

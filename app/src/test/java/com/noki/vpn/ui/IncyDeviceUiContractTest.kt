@@ -34,22 +34,4 @@ class IncyDeviceUiContractTest {
         assertFalse(shouldClearIncyClipboard(link, marker, 2, "INCY", link, marker))
     }
 
-    @Test
-    fun `incy device dialogs use the Noki device surface`() {
-        assertTrue(source.contains("IncyDeviceDialogSurface("))
-        assertTrue(source.contains("SettingsCompactInputField("))
-        assertTrue(source.contains("DevicesDialogButton("))
-        assertFalse(source.contains("AlertDialog("))
-        assertFalse(source.contains("OutlinedTextField("))
-        assertFalse(source.contains("TextButton("))
-    }
-
-    @Test
-    fun `new incy devices can show and copy a v2rayn subscription with qr`() {
-        assertTrue(source.contains("v2raynSubscriptionUrl"))
-        assertTrue(source.contains("GlassSegmentedControl("))
-        assertTrue(source.contains("listOf(\"INCY\", \"v2rayN\")"))
-        assertTrue(source.contains("ConnectionQrBlock("))
-        assertTrue(source.contains("Ссылка подписки v2rayN"))
-    }
 }

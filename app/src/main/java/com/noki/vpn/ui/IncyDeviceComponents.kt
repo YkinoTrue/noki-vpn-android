@@ -284,7 +284,7 @@ internal fun IncyDeviceDialogs(
                     lensRefractionHeight = devicesDp(4f, scale),
                     lensRefractionAmount = devicesDp(6f, scale),
                     chromaticAberration = false,
-                    liveGlassEnabled = liveGlassEnabled,
+                    liveGlassEnabled = false,
                     depthEffectEnabled = false,
                 )
             }

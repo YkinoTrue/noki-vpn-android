@@ -182,6 +182,7 @@ data class AndroidUpdateInfo(
 data class AndroidUpdateUiState(
     val isChecking: Boolean = false,
     val isDownloading: Boolean = false,
+    val isReadyToInstall: Boolean = false,
     val currentVersionName: String = "",
     val update: AndroidUpdateInfo? = null,
     val error: String? = null,

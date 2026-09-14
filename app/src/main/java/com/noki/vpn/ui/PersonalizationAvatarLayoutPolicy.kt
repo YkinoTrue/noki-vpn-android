@@ -7,7 +7,7 @@ object PersonalizationAvatarLayoutPolicy {
     const val editButtonOffsetXDp = 81f
     const val editButtonOffsetYDp = 81f
 
-    const val menuWidthDp = 190f
+    const val menuWidthDp = 230f
     const val menuHeightDp = 108f
     const val menuTopOffsetDp = 4f
     const val menuCornerRadiusDp = 15f
