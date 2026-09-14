@@ -3,6 +3,13 @@ package com.noki.vpn
 import java.io.File
 
 internal object AndroidUpdateCachePolicy {
+    fun clearInstalledApks(context: android.content.Context) {
+        val version = BuildConfig.VERSION_NAME
+        File(context.cacheDir, "android_updates").listFiles()
+            ?.filter { shouldDeleteCachedApk(it, version) }
+            ?.forEach { it.delete() }
+    }
+
     fun fileName(update: AndroidUpdateInfo): String {
         val safeVersion = update.versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val safeArchitecture = update.architecture.replace(Regex("[^A-Za-z0-9._-]"), "_")
@@ -27,8 +34,9 @@ internal object AndroidUpdateCachePolicy {
     }
 
     fun shouldDeleteCachedApk(file: File, currentVersionName: String): Boolean {
-        if (!file.isFile || !file.extension.equals("apk", ignoreCase = true)) return false
-        val versionName = cachedVersionName(file.name) ?: return true
+        val name = file.name.removeSuffix(".part")
+        if (!file.isFile || !name.endsWith(".apk", ignoreCase = true)) return false
+        val versionName = cachedVersionName(name) ?: return true
         return compareVersionNames(versionName, currentVersionName) <= 0
     }
 

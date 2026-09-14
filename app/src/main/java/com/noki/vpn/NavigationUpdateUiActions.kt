@@ -34,15 +34,6 @@ private fun AppUiRuntime.isCurrentAndroidUpdateOperation(
     isSessionCurrent = authSessionCoordinator.isCurrent(attempt),
 )
 
-private fun AppUiRuntime.requireCurrentAndroidUpdateOperation(
-    owner: Job,
-    attempt: AuthSessionAttempt,
-) {
-    if (!isCurrentAndroidUpdateOperation(owner, attempt)) {
-        throw CancellationException("Android update operation is no longer current")
-    }
-}
-
 internal fun AppUiRuntime.setPendingVpnStartMode(mode: VpnRuntimeMode) {
     pendingVpnStartModeState.mode = mode
 }
@@ -250,7 +241,7 @@ internal fun AppUiRuntime.refreshAndroidUpdateStatus() {
 }
 
 internal fun AppUiRuntime.installAndroidUpdate() {
-    if (androidUpdateJob != null) return
+    if (androidUpdateJob != null || uiState.androidUpdate.isDownloading) return
     val update = uiState.androidUpdate.update ?: return
     val language = uiState.personalizationSettings.language
     val attempt = authSessionCoordinator.attempt()
@@ -271,46 +262,20 @@ internal fun AppUiRuntime.installAndroidUpdate() {
         )
         return
     }
-    val operationRevision = advanceAndroidUpdateRevision()
-    uiState = uiState.copy(
-        androidUpdate = uiState.androidUpdate.copy(
-            isDownloading = true,
-            error = null,
-        )
-    )
-
-    val job = scope.launch(start = CoroutineStart.LAZY) {
-        val owner = currentCoroutineContext()[Job]
-            ?: error("Android update coroutine has no Job")
-        try {
-            androidUpdateCoordinator.downloadAndLaunch(update) {
-                requireCurrentAndroidUpdateOperation(owner, attempt)
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            if (isCurrentAndroidUpdateOperation(owner, attempt)) {
-                uiState = uiState.copy(
-                    androidUpdate = uiState.androidUpdate.copy(
-                        error = androidUpdateCoordinator.readableInstallError(language, error),
-                    ),
-                )
-            }
-        } finally {
-            if (androidUpdateJob === owner) {
-                androidUpdateJob = null
-                if (androidUpdateRevision == operationRevision) {
-                    advanceAndroidUpdateRevision()
-                }
-                uiState = uiState.copy(
-                    androidUpdate = uiState.androidUpdate.copy(isDownloading = false),
-                )
+    if (uiState.androidUpdate.isReadyToInstall) {
+        scope.launch {
+            if (!androidUpdateCoordinator.launchReadyUpdate(explicit = true)) {
+                uiState = uiState.copy(androidUpdate = uiState.androidUpdate.copy(
+                    error = tr(language, "Не удалось открыть установщик APK", "Failed to open APK installer"),
+                ))
             }
         }
+    } else {
+        AndroidUpdateWorker.enqueue(application, update, repository.load().backendDeviceId)
+        uiState = uiState.copy(androidUpdate = uiState.androidUpdate.copy(isDownloading = true, error = null))
     }
-    androidUpdateJob = job
-    job.start()
 }
+
 
 internal fun AppUiRuntime.showCurrentDeviceAccessDenied() {
     uiState = uiState.copy(dialog = AppDialog.AccessDenied, inlineMessage = null)

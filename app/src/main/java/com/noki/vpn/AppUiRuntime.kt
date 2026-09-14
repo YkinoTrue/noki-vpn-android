@@ -25,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 
 internal class AppUiRuntime(
     val application: Application,
@@ -280,7 +281,29 @@ internal class AppUiRuntime(
                 repository.updateSettings { latest -> latest.copy(backendDeviceKey = backendDeviceKey) }
             }
 
-            uiState = uiState.copy(screenStack = listOf(firstDestination))
+            withContext(Dispatchers.IO) { androidUpdateCoordinator.clearSameOrOlderCachedApks() }
+            val download = androidUpdateCoordinator.observeDownloads().first()
+            uiState = uiState.copy(
+                screenStack = listOf(firstDestination),
+                androidUpdate = uiState.androidUpdate.copy(
+                    isDownloading = download != null && !download.state.isFinished,
+                    isReadyToInstall = androidUpdateCoordinator.readyFile(download) != null,
+                ),
+            )
+
+            scope.launch {
+                androidUpdateCoordinator.observeDownloads().collect { work ->
+                    if (!uiState.isReady) return@collect
+                    advanceAndroidUpdateRevision()
+                    uiState = uiState.copy(androidUpdate = uiState.androidUpdate.copy(
+                        isDownloading = work != null && !work.state.isFinished,
+                        isReadyToInstall = androidUpdateCoordinator.readyFile(work) != null,
+                        error = if (work?.state == androidx.work.WorkInfo.State.FAILED) {
+                            work.outputData.getString("error")
+                        } else uiState.androidUpdate.error,
+                    ))
+                }
+            }
 
             if (prepared.isAuthenticated && !authSessionCoordinator.snapshot().accessToken.isNullOrBlank()) {
                 authSessionCoordinator.attempt()?.let { startupAttempt ->

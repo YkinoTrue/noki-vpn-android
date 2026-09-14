@@ -200,7 +200,7 @@ class AndroidUpdateDownloadTest {
         const val BASE_URL = "https://example.test"
         const val APK_URL = "$BASE_URL/v1/app/android-releases/noki.apk"
         const val APK_MIME_TYPE = "application/vnd.android.package-archive"
-        const val MAX_APK_BYTES = 150L * 1024L * 1024L
+        const val MAX_APK_BYTES = 256L * 1024L * 1024L
         val OLD_APK = "old-apk".toByteArray()
         val STREAM_CHUNK = ByteArray(DEFAULT_BUFFER_SIZE)
     }

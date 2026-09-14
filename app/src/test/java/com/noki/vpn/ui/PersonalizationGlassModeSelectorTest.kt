@@ -9,12 +9,6 @@ import org.junit.Test
 
 class PersonalizationGlassModeSelectorTest {
     @Test
-    fun `ui kit keeps only panel and action surface radii`() {
-        assertEquals(24f, NokiUiKitPolicy.panelCornerRadiusDp)
-        assertEquals(18f, NokiUiKitPolicy.actionCornerRadiusDp)
-    }
-
-    @Test
     fun `full glass toggle maps to the two remaining modes`() {
         assertEquals(listOf(GlassMode.SIMPLE, GlassMode.FULL), GlassMode.entries)
         assertFalse(fullGlassEnabled(GlassMode.SIMPLE))

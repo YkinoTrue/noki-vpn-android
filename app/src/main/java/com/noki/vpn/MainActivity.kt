@@ -140,6 +140,12 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (!viewModel.uiState.isReady) delay(50)
+                viewModel.observeDownloadedAndroidUpdates()
+            }
+        }
         if (shouldFilterTouchesWhenObscured(Build.VERSION.SDK_INT)) {
             window.decorView.rootView.filterTouchesWhenObscured = true
         }

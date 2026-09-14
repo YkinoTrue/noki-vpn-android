@@ -313,7 +313,7 @@ internal class BackendContentClient(
         private const val API_PREFIX = "/v1"
         private const val AVATAR_UPLOAD_MAX_BYTES = 1L * 1024L * 1024L
         private const val AVATAR_DOWNLOAD_MAX_BYTES = 5L * 1024L * 1024L
-        private const val APK_DOWNLOAD_MAX_BYTES = 150L * 1024L * 1024L
+        private const val APK_DOWNLOAD_MAX_BYTES = 256L * 1024L * 1024L
     }
 }
 

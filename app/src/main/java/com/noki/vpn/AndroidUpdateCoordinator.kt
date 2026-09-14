@@ -1,6 +1,19 @@
 package com.noki.vpn
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.pm.ServiceInfo
+import androidx.core.app.NotificationCompat
+import androidx.work.*
+import com.noki.vpn.data.AuthTokenRefresher
+import com.noki.vpn.data.BackendException
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import java.io.IOException
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
@@ -35,6 +48,97 @@ internal fun interface AndroidUpdateStateLoader {
     ): AndroidUpdateUiState
 }
 
+class AndroidUpdateWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
+    override suspend fun doWork(): Result {
+        val repository = SettingsRepository(applicationContext)
+        val settings = repository.load()
+        val versionCode = inputData.getLong("version_code", 0)
+        if (versionCode <= repository.currentAppVersionCode()) {
+            AndroidUpdateCachePolicy.clearInstalledApks(applicationContext)
+            return Result.success()
+        }
+        if (!settings.isAuthenticated || settings.backendDeviceId != inputData.getString("device_id")) {
+            return Result.failure()
+        }
+        val api = BackendApiClient()
+        val auth = AuthSessionCoordinator(repository, AuthTokenRefresher(repository, api)).apply { restore(settings) }
+        val coordinator = AndroidUpdateCoordinator(applicationContext as Application, repository, api, auth) { event ->
+            repository.recordAppLog(category = "android_update", message = event.message,
+                details = event.details, errorType = event.errorType)
+        }
+        val russian = settings.personalizationSettings.language == AppLanguage.RU
+        val manager = applicationContext.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Обновление Noki", NotificationManager.IMPORTANCE_LOW))
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
+            .setSmallIcon(R.drawable.ic_noki_notification)
+            .setContentTitle("Noki — ${inputData.getString("version_name")}")
+            .setContentText(if (russian) "Скачивание обновления" else "Downloading update")
+            .setOngoing(true).setProgress(0, 0, true)
+            .setContentIntent(PendingIntent.getActivity(applicationContext, 234,
+                Intent(applicationContext, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .build()
+        return try {
+            setForeground(if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(DOWNLOAD_NOTIFICATION, notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(DOWNLOAD_NOTIFICATION, notification))
+            val update = AndroidUpdateInfo(versionCode, requireNotNull(inputData.getString("version_name")),
+                architecture = requireNotNull(inputData.getString("architecture")),
+                apkUrl = requireNotNull(inputData.getString("url")), apkSha256 = inputData.getString("sha256"),
+                apkSizeBytes = inputData.getLong("size", 0).takeIf { it > 0 })
+            val file = coordinator.download(update) {
+                val latest = repository.load()
+                check(latest.isAuthenticated && latest.backendDeviceId == settings.backendDeviceId) { "auth_required" }
+            }
+            val uri = FileProvider.getUriForFile(applicationContext, "${applicationContext.packageName}.fileprovider", file)
+            val installIntent = PendingIntent.getActivity(applicationContext, 235,
+                coordinator.buildInstallerIntent(uri), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            if (Build.VERSION.SDK_INT < 33 || androidx.core.content.ContextCompat.checkSelfPermission(
+                    applicationContext, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                manager.notify(READY_NOTIFICATION, NotificationCompat.Builder(applicationContext, CHANNEL)
+                .setSmallIcon(R.drawable.ic_noki_notification)
+                .setContentTitle(if (russian) "Обновление Noki скачано" else "Noki update downloaded")
+                .setContentText(if (russian) "Нажмите, чтобы установить ${update.versionName}" else "Tap to install ${update.versionName}")
+                    .setContentIntent(installIntent).setAutoCancel(true).build())
+            }
+            Result.success(workDataOf("version_code" to versionCode, "filename" to file.name))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (runAttemptCount < 5 && (error is IOException || error is BackendException && error.statusCode in 500..599)) {
+                Result.retry()
+            } else {
+                Result.failure(workDataOf("version_code" to versionCode,
+                    "error" to coordinator.readableInstallError(settings.personalizationSettings.language, error)))
+            }
+        }
+    }
+
+    companion object {
+        internal const val WORK_NAME = "user_requested_android_update"
+        private const val CHANNEL = "noki_android_update"
+        private const val DOWNLOAD_NOTIFICATION = 52_101
+        internal const val READY_NOTIFICATION = 52_102
+
+        internal fun enqueue(context: Context, update: AndroidUpdateInfo, deviceId: String) {
+            val request = OneTimeWorkRequestBuilder<AndroidUpdateWorker>()
+                .setInputData(workDataOf("version_code" to update.versionCode, "version_name" to update.versionName,
+                    "architecture" to update.architecture, "url" to update.apkUrl, "sha256" to update.apkSha256,
+                    "size" to (update.apkSizeBytes ?: 0), "device_id" to deviceId))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, request)
+        }
+    }
+}
+
+class AndroidUpdateInstalledReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        AndroidUpdateCachePolicy.clearInstalledApks(context)
+        context.getSystemService(NotificationManager::class.java).cancel(AndroidUpdateWorker.READY_NOTIFICATION)
+    }
+}
+
 internal class AndroidUpdateCoordinator(
     private val app: Application,
     private val repository: SettingsRepository,
@@ -58,7 +162,6 @@ internal class AndroidUpdateCoordinator(
         } catch (error: Throwable) {
             fallbackState.copy(
                 isChecking = false,
-                isDownloading = false,
                 currentVersionName = repository.currentAppVersionName(),
                 error = AppErrorMapper.readableNetworkError(language, error),
             )
@@ -84,10 +187,10 @@ internal class AndroidUpdateCoordinator(
         )
     }
 
-    suspend fun downloadAndLaunch(
+    suspend fun download(
         update: AndroidUpdateInfo,
-        ensureInstallerLaunchAllowed: () -> Unit,
-    ) {
+        ensureDownloadCurrent: () -> Unit,
+    ): File {
         val targetFile = androidUpdateFile(update)
         clearSameOrOlderCachedApks()
         targetFile.delete()
@@ -120,8 +223,8 @@ internal class AndroidUpdateCoordinator(
                 ),
             )
             currentCoroutineContext().ensureActive()
-            ensureInstallerLaunchAllowed()
-            launchInstaller(targetFile)
+            ensureDownloadCurrent()
+            return targetFile
         } catch (cancelled: CancellationException) {
             targetFile.delete()
             clearSameOrOlderCachedApks()
@@ -131,7 +234,7 @@ internal class AndroidUpdateCoordinator(
             clearSameOrOlderCachedApks()
             logEvent(
                 AndroidUpdateLogEvent(
-                    message = "install_failed",
+                    message = "download_failed",
                     details = "version=${update.versionName}, architecture=${update.architecture}",
                     errorType = error::class.java.simpleName,
                 ),
@@ -161,9 +264,7 @@ internal class AndroidUpdateCoordinator(
     }
 
     fun clearSameOrOlderCachedApks() {
-        androidUpdateDirectory().listFiles()
-            ?.filter { file -> AndroidUpdateCachePolicy.shouldDeleteCachedApk(file, repository.currentAppVersionName()) }
-            ?.forEach { file -> file.delete() }
+        AndroidUpdateCachePolicy.clearInstalledApks(app)
     }
 
     override suspend fun loadStateWithToken(
@@ -184,7 +285,6 @@ internal class AndroidUpdateCoordinator(
         } catch (error: Throwable) {
             return fallbackState.copy(
                 isChecking = false,
-                isDownloading = false,
                 currentVersionName = currentVersionName,
                 error = if (fallbackState.update == null) {
                     AppErrorMapper.readableNetworkError(language, error)
@@ -201,9 +301,13 @@ internal class AndroidUpdateCoordinator(
         } else {
             repository.markAndroidUpdateAvailable()
         }
+        val download = observeDownloads().first()
         return AndroidUpdateUiState(
             currentVersionName = currentVersionName,
             update = uiUpdate,
+            isDownloading = download != null && !download.state.isFinished,
+            isReadyToInstall = readyFile(download) != null,
+            error = download?.takeIf { it.state == WorkInfo.State.FAILED }?.outputData?.getString("error"),
         )
     }
 
@@ -224,6 +328,34 @@ internal class AndroidUpdateCoordinator(
         )
     }
 
+    internal fun observeDownloads() = WorkManager.getInstance(app)
+        .getWorkInfosForUniqueWorkFlow(AndroidUpdateWorker.WORK_NAME)
+        .map { items -> items.firstOrNull { !it.state.isFinished } ?: items.maxByOrNull { it.outputData.getLong("version_code", 0) } }
+
+    internal fun readyFile(work: WorkInfo?): File? {
+        if (work?.state != WorkInfo.State.SUCCEEDED) return null
+        if (work.outputData.getLong("version_code", 0) <= repository.currentAppVersionCode()) return null
+        val name = work.outputData.getString("filename") ?: return null
+        if (name != File(name).name) return null
+        return File(androidUpdateDirectory(), name).takeIf { it.isFile && it.length() > 0 }
+    }
+
+    internal suspend fun launchReadyUpdate(explicit: Boolean): Boolean {
+        val work = observeDownloads().first() ?: return false
+        val file = readyFile(work) ?: return false
+        val preferences = app.getSharedPreferences("android_update_install", Context.MODE_PRIVATE)
+        if (!explicit && preferences.getString("launched", null) == work.id.toString()) return false
+        if (!app.packageManager.canRequestPackageInstalls()) return false
+        try {
+            launchInstaller(file)
+            preferences.edit().putString("launched", work.id.toString()).apply()
+            return true
+        } catch (error: Exception) {
+            logEvent(AndroidUpdateLogEvent("installer_launch_failed", errorType = error.javaClass.simpleName))
+            return false
+        }
+    }
+
     private fun androidUpdateFile(update: AndroidUpdateInfo): File {
         return File(androidUpdateDirectory(), AndroidUpdateCachePolicy.fileName(update))
     }
@@ -232,7 +364,7 @@ internal class AndroidUpdateCoordinator(
         return File(app.cacheDir, "android_updates")
     }
 
-    private fun launchInstaller(file: File) {
+    internal fun launchInstaller(file: File) {
         val uri = FileProvider.getUriForFile(
             app,
             "${app.packageName}.fileprovider",
@@ -252,7 +384,7 @@ internal class AndroidUpdateCoordinator(
         }
     }
 
-    private fun buildInstallerIntent(uri: Uri): Intent {
+    internal fun buildInstallerIntent(uri: Uri): Intent {
         val candidates = listOf(
             Intent(Intent.ACTION_INSTALL_PACKAGE),
             Intent(Intent.ACTION_VIEW),

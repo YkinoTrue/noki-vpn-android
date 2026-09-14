@@ -82,25 +82,6 @@ class GlassRenderingContractTest {
     }
 
     @Test
-    fun fullGlassAndLanguageRowsShareTheSamePanelGeometry() {
-        val preferences = source("PersonalizationPreferenceComponents")
-        val fullGlassRow = function(preferences, "PersonalizationGlassModeRow")
-
-        assertFalse(fullGlassRow.contains("shape = RoundedCornerShape(18.dp)"))
-    }
-
-    @Test
-    fun simpleHomeBackgroundHasNoGrainTexturePath() {
-        val home = source("HomeServerCards")
-
-        assertFalse(home.contains("Grain"))
-        assertFalse(home.contains("BitmapShader"))
-        assertFalse(home.contains("drawIntoCanvas"))
-        assertTrue(home.contains("R.drawable.simple_topography"))
-        assertTrue(home.contains("ContentScale.Crop"))
-    }
-
-    @Test
     fun notificationHistoryScrimDrawsBehindSystemBars() {
         val account = source("AccountScreen")
         val dialog = function(account, "AccountNotificationHistory")

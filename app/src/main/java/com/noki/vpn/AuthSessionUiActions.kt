@@ -39,6 +39,7 @@ internal fun AppUiRuntime.logout() {
     staleLogUpload?.cancel()
     advanceAndroidUpdateRevision()
     androidUpdateJob?.cancel()
+    androidx.work.WorkManager.getInstance(application).cancelUniqueWork(AndroidUpdateWorker.WORK_NAME)
     val staleAvatarMutation = avatarMutationJob
     avatarMutationJob = null
     staleAvatarMutation?.cancel()
