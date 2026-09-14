@@ -244,6 +244,8 @@ class MainViewModel(
 
     fun toggleAutoEndpointSelection(enabled: Boolean) = runtime.toggleAutoEndpointSelection(enabled)
 
+    fun setKillSwitchEnabled(enabled: Boolean) = runtime.setKillSwitchEnabled(enabled)
+
     fun refreshEndpointOptions(
         context: Context,
         force: Boolean = false,

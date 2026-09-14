@@ -137,21 +137,34 @@ fun AdvancedSettingsScreen(
 
                 Spacer(modifier = Modifier.height(metrics.dp(20f)))
 
-                AdvancedProtocolToggleCard(
-                    autoEndpointSelection = autoEndpointSelection,
-                    language = language,
+                AdvancedToggleCard(
+                    enabled = autoEndpointSelection,
+                    title = tr(language, "Автовыбор протокола", "Auto protocol selection"),
                     backdrop = surfaceBackdrop,
                     liveGlassEnabled = liveGlassEnabled,
                     modifier = Modifier
                         .widthIn(max = metrics.dp(370f))
                         .fillMaxWidth()
                         .height(metrics.dp(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp)),
-                    onAutoEndpointSelectionChanged = { enabled ->
+                    onEnabledChanged = { enabled ->
                         viewModel.toggleAutoEndpointSelection(enabled)
                         if (!enabled) {
                             viewModel.refreshEndpointOptions(context, force = true)
                         }
                     },
+                )
+
+                Spacer(modifier = Modifier.height(metrics.dp(25f)))
+                AdvancedToggleCard(
+                    enabled = state.advancedSettings.killSwitchEnabled,
+                    title = "Kill-switch",
+                    backdrop = surfaceBackdrop,
+                    liveGlassEnabled = liveGlassEnabled,
+                    modifier = Modifier
+                        .widthIn(max = metrics.dp(370f))
+                        .fillMaxWidth()
+                        .height(metrics.dp(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp)),
+                    onEnabledChanged = viewModel::setKillSwitchEnabled,
                 )
 
                 if (!autoEndpointSelection) {

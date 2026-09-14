@@ -42,13 +42,13 @@ import com.noki.vpn.data.VpnEndpointOption
 import com.noki.vpn.data.VpnProtocol
 
 @Composable
-internal fun AdvancedProtocolToggleCard(
-    autoEndpointSelection: Boolean,
-    language: AppLanguage,
+internal fun AdvancedToggleCard(
+    enabled: Boolean,
+    title: String,
     backdrop: LayerBackdrop?,
     liveGlassEnabled: Boolean,
     modifier: Modifier,
-    onAutoEndpointSelectionChanged: (Boolean) -> Unit,
+    onEnabledChanged: (Boolean) -> Unit,
 ) {
     val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     AdvancedPanelSurface(
@@ -64,7 +64,7 @@ internal fun AdvancedProtocolToggleCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AdvancedText(
-                text = tr(language, "Автовыбор протокола", "Auto protocol selection"),
+                text = title,
                 fontSize = 16f,
                 lineHeight = 20f,
                 color = AdvancedTextPrimary,
@@ -72,8 +72,8 @@ internal fun AdvancedProtocolToggleCard(
             )
             NokiLiquidToggle(
                 sizeFactor = metrics.contentScale,
-                selected = autoEndpointSelection,
-                onSelectedChange = onAutoEndpointSelectionChanged,
+                selected = enabled,
+                onSelectedChange = onEnabledChanged,
                 backdrop = backdrop,
                 liveGlassEnabled = liveGlassEnabled,
                 modifier = Modifier.padding(start = metrics.dp(14f)),

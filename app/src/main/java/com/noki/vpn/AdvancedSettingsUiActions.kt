@@ -105,6 +105,13 @@ internal fun AppUiRuntime.toggleAutoEndpointSelection(enabled: Boolean) {
     uiState = withFreeTrafficLimitNotice(next.copy(profile = persisted.profile))
 }
 
+internal fun AppUiRuntime.setKillSwitchEnabled(enabled: Boolean) {
+    applyAndPersist(uiState.copy(advancedSettings = uiState.advancedSettings.copy(killSwitchEnabled = enabled)))
+    if (!enabled && AppVpnService.liveRuntimeState().state == VpnConnectionState.FAILED) {
+        vpnCommands.restart()
+    }
+}
+
 internal fun AppUiRuntime.refreshEndpointOptions(
     context: Context,
     force: Boolean = false,

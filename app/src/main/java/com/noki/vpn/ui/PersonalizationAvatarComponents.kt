@@ -210,6 +210,7 @@ internal fun PersonalizationAvatarMenu(
             PersonalizationAvatarMenuRow(
                 iconRes = R.drawable.personalization_avatar_gallery_icon,
                 text = tr(language, "Выбрать из галереи", "Choose from gallery"),
+                fontSize = 10f,
                 textColor = PersonalizationTextPrimary,
                 iconTextGap = metrics.dp(PersonalizationAvatarLayoutPolicy.pickRowIconTextGapDp),
                 enabled = enabled,
@@ -240,6 +241,7 @@ internal fun PersonalizationAvatarMenuRow(
     textColor: Color,
     iconTextGap: androidx.compose.ui.unit.Dp,
     enabled: Boolean,
+    fontSize: Float = 12f,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -264,7 +266,7 @@ internal fun PersonalizationAvatarMenuRow(
         PersonalizationText(
             text = text,
             color = textColor,
-            fontSize = 12f,
+            fontSize = fontSize,
             lineHeight = 16f,
             fontWeight = FontWeight.Normal,
             modifier = Modifier,

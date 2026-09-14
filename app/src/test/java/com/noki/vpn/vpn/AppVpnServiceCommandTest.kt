@@ -50,6 +50,47 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 class AppVpnServiceCommandTest {
     @Test
+    fun killSwitchRetainsTunnelAcrossFailuresAndRestartUntilExplicitStop() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.enableKillSwitch()
+        fixture.useOfflinePreparation()
+        val tunnel = fixture.orchestrator.currentTunnel()
+        fixture.prepareFailure(java.io.IOException("network lost"))
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+        assertFalse(shadowOf(fixture.service).isStoppedBySelf)
+
+        fixture.prepareFailure(IllegalStateException("auth_required"))
+        assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+        fixture.invoke("restartVpn", true, false)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+        assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+
+        fixture.stop(1)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+        assertNull(fixture.orchestrator.currentTunnel())
+        assertEquals(VpnConnectionState.DISCONNECTED, fixture.orchestrator.currentState())
+    }
+
+    @Test
+    fun killSwitchKeepsFailedStartupAndInvalidatedReadinessBlocked() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = null)
+        fixture.enableKillSwitch()
+        fixture.startPrepared()
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        org.junit.Assert.assertNotNull(fixture.orchestrator.currentTunnel())
+        fixture.stop(1)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+
+        fixture.onProbe = { fixture.orchestrator.invalidate() }
+        fixture.startPrepared()
+        org.junit.Assert.assertNotNull(fixture.orchestrator.currentTunnel())
+        fixture.stop(2)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+    }
+
+    @Test
     fun requestedLatencyPublishesFreshSamplesAndCoalescesConcurrentRefreshes() = runBlocking {
         val fixture = Fixture(this)
         val repository = SettingsRepository(fixture.service)
@@ -352,6 +393,13 @@ class AppVpnServiceCommandTest {
             set("connectionPreparer", preparer)
             set("backgroundScope", scope)
             set("delayedTaskScheduler", scheduler)
+            set("watchdogController", VpnWatchdogController(
+                scheduler = scheduler,
+                nowMillis = { 0L },
+                launchProbe = { _, _ -> null },
+                isLockdown = { false },
+                evidenceFreshMillis = 1L,
+            ))
             set("warmupController", VpnWarmupController<BackendVpnSession>(scheduler, 1L))
             set("statsCoordinator", VpnStatsCoordinator(service, scope, scheduler, { null }, { _, _ -> }))
             set("isXrayRuntimeAvailable", { true })
@@ -372,6 +420,13 @@ class AppVpnServiceCommandTest {
         }
 
         fun startAccount() = invoke("startVpn", true, false)
+
+        fun enableKillSwitch() {
+            store.updateSettings { it.copy(advancedSettings = it.advancedSettings.copy(killSwitchEnabled = true)) }
+            SettingsRepository(service).updateSettings {
+                it.copy(advancedSettings = it.advancedSettings.copy(killSwitchEnabled = true))
+            }
+        }
 
         fun useOfflinePreparation() {
             store.updateSettings { it.copy(backendAccessToken = "test-token") }

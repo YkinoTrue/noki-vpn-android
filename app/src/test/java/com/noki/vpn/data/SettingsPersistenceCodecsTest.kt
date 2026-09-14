@@ -14,6 +14,14 @@ class SettingsPersistenceCodecsTest {
     private val settingsCodec = StoredSettingsCodec { defaults }
 
     @Test
+    fun `kill switch is opt in and survives settings round trip`() {
+        assertFalse(settingsCodec.decode(null).advancedSettings.killSwitchEnabled)
+        assertFalse(settingsCodec.decode("{}").advancedSettings.killSwitchEnabled)
+        val enabled = defaults.copy(advancedSettings = defaults.advancedSettings.copy(killSwitchEnabled = true))
+        assertTrue(settingsCodec.decode(settingsCodec.encode(enabled)).advancedSettings.killSwitchEnabled)
+    }
+
+    @Test
     fun `fresh selection is auto while legacy storage retains its country`() {
         assertEquals(ServerSelectionMode.AUTO, settingsCodec.decode(null).userProfile.serverSelectionMode)
         val migrated = settingsCodec.decode("""{"selectedCountryCode":"DE"}""")
