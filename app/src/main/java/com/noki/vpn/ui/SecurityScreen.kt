@@ -362,20 +362,21 @@ internal fun SecurityAboutSheet(
         containerColor = SecurityBgLighter,
         contentColor = SecurityTextPrimary,
         shape = RoundedCornerShape(topStart = metrics.dp(32f), topEnd = metrics.dp(32f)),
-        dragHandle = {
-            Box(Modifier.padding(vertical = metrics.dp(14f))
-                .width(metrics.dp(165f)).height(metrics.dp(4f))
-                .background(SecurityTextSecondary, RoundedCornerShape(50)))
-        },
+        dragHandle = null,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().heightIn(min = metrics.dp(340f))
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = metrics.dp(24f), vertical = metrics.dp(22f)),
+                .padding(horizontal = metrics.dp(24f))
+                .padding(top = metrics.dp(14f), bottom = metrics.dp(24f)),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(metrics.dp(18f)),
         ) {
-            Column(horizontalAlignment = Alignment.End) {
+            Box(Modifier
+                .width(metrics.dp(NokiUiKitPolicy.homeServerDropdownHandleWidthDp))
+                .height(metrics.dp(NokiUiKitPolicy.homeServerDropdownHandleHeightDp))
+                .background(Color.White.copy(alpha = HOME_SERVER_DROPDOWN_HANDLE_VISIBLE_ALPHA), RoundedCornerShape(50)))
+            Spacer(Modifier.height(metrics.dp(28f)))
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(metrics.dp(4f))) {
                 FigmaSvgAsset(
                     resId = R.raw.noki_logo,
                     viewportWidth = 197,
@@ -385,7 +386,8 @@ internal fun SecurityAboutSheet(
                 Text(tr(language, "версия ${BuildConfig.VERSION_NAME}", "version ${BuildConfig.VERSION_NAME}"),
                     fontFamily = ManropeFontFamily, fontSize = metrics.sp(10f))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(metrics.dp(20f))) {
+            Spacer(Modifier.height(metrics.dp(24f)))
+            Row(horizontalArrangement = Arrangement.spacedBy(metrics.dp(20f)), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { uriHandler.openUri("https://noki.ykino.tech") }) {
                     Canvas(Modifier.size(metrics.dp(28f)).semantics {
                         contentDescription = tr(language, "Сайт Noki", "Noki website")
@@ -398,17 +400,20 @@ internal fun SecurityAboutSheet(
                     }
                 }
                 IconButton(onClick = { uriHandler.openUri("https://t.me/nokivpn") }) {
-                    Icon(painterResource(R.drawable.support_telegram), contentDescription = "Telegram",
+                    Icon(painterResource(R.drawable.login_telegram_icon), contentDescription = "Telegram",
                         modifier = Modifier.size(metrics.dp(28f)), tint = SecurityTextPrimary)
                 }
             }
-            listOf(
-                tr(language, "Условия использования", "Terms of use") to "https://noki.ykino.tech/legal/terms",
-                tr(language, "Политика конфиденциальности", "Privacy policy") to "https://noki.ykino.tech/legal/privacy",
-            ).forEach { (label, url) ->
-                Text(label, fontFamily = ManropeFontFamily, fontSize = metrics.sp(14f),
-                    textDecoration = TextDecoration.Underline,
-                    modifier = Modifier.clickable { uriHandler.openUri(url) }.padding(vertical = metrics.dp(8f)))
+            Spacer(Modifier.height(metrics.dp(20f)))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                listOf(
+                    tr(language, "Условия использования", "Terms of use") to "https://noki.ykino.tech/legal/terms",
+                    tr(language, "Политика конфиденциальности", "Privacy policy") to "https://noki.ykino.tech/legal/privacy",
+                ).forEach { (label, url) ->
+                    Text(label, fontFamily = ManropeFontFamily, fontSize = metrics.sp(14f),
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable { uriHandler.openUri(url) }.padding(vertical = metrics.dp(6f)))
+                }
             }
         }
     }
