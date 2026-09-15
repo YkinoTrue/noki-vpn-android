@@ -143,6 +143,8 @@ class AccountSecurityCoordinatorTest {
             email: String,
             currentDeviceId: String?,
             currentDeviceKey: String?,
+            currentEmail: String?,
+            currentVerificationCode: String?,
         ): Int = 60
 
         override suspend fun changeAccountEmail(
@@ -151,6 +153,8 @@ class AccountSecurityCoordinatorTest {
             verificationCode: String,
             currentDeviceId: String?,
             currentDeviceKey: String?,
+            currentEmail: String?,
+            currentVerificationCode: String?,
         ): BackendUser = user().copy(email = email, hasRealEmail = true)
 
         override suspend fun changeAccountPassword(

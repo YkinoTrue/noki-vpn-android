@@ -93,7 +93,8 @@ internal fun AccountCredentialChangeScreen(
                 is AccountSecurityActionState.Email -> {
                     if (!action.codeSent) {
                         AuthFieldLabel(
-                            text = tr(language, "Введите новый e-mail", "Enter a new email"),
+                            text = if (action.verifyingCurrentEmail) tr(language, "Введите текущий e-mail", "Enter your current email")
+                            else tr(language, "Введите новый e-mail", "Enter a new email"),
                             modifier = Modifier
                                 .offset(x = authMetrics.contentStart, y = authMetrics.dp(371f))
                                 .width(authMetrics.contentWidth),
@@ -111,6 +112,13 @@ internal fun AccountCredentialChangeScreen(
                                 .height(authMetrics.dp(48f)),
                         )
                     } else {
+                        AuthFieldLabel(
+                            text = if (action.verifyingCurrentEmail) tr(language, "Код с текущей почты", "Code from your current email")
+                            else tr(language, "Код с новой почты", "Code from your new email"),
+                            modifier = Modifier
+                                .offset(x = authMetrics.contentStart, y = authMetrics.dp(371f))
+                                .width(authMetrics.contentWidth),
+                        )
                         AuthVerificationCodeField(
                             value = action.verificationCode,
                             onValueChange = viewModel::updateAccountEmailCode,
@@ -145,8 +153,9 @@ internal fun AccountCredentialChangeScreen(
                             .width(authMetrics.contentWidth),
                     )
                     AuthPrimaryButton(
-                        text = if (action.codeSent) {
-                            tr(language, "Сменить e-mail", "Change email")
+                        text = if (action.codeSent && !action.verifyingCurrentEmail) {
+                            if (state.userProfile.hasRealEmail) tr(language, "Сменить e-mail", "Change email")
+                            else tr(language, "Привязать e-mail", "Link email")
                         } else {
                             tr(language, "Далее", "Next")
                         },

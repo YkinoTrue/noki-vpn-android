@@ -14,7 +14,7 @@ internal fun AppUiRuntime.openAccountEmailChange() {
         uiState.screenStack + AppDestination.ACCOUNT_CREDENTIAL_CHANGE
     }
     uiState = uiState.copy(
-        accountSecurityState = AccountSecurityStateReducer.email(uiState.accountSecurityState, ""),
+        accountSecurityState = AccountSecurityStateReducer.email(uiState.accountSecurityState, "", uiState.userProfile.hasRealEmail),
         screenStack = stack,
         inlineMessage = null,
     )

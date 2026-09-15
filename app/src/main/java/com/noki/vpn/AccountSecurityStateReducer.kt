@@ -5,6 +5,9 @@ import com.noki.vpn.data.AppLanguage
 sealed interface AccountSecurityActionState {
     data class Email(
         val email: String = "",
+        val verifyingCurrentEmail: Boolean = false,
+        val currentEmail: String? = null,
+        val currentVerificationCode: String? = null,
         val verificationCode: String = "",
         val codeSent: Boolean = false,
         val cooldownSeconds: Int = 0,
@@ -59,8 +62,8 @@ internal object AccountSecurityStateReducer {
     fun dismiss(current: AccountSecurityUiState): AccountSecurityUiState =
         current.copy(action = null)
 
-    fun email(current: AccountSecurityUiState, email: String): AccountSecurityUiState =
-        current.copy(action = AccountSecurityActionState.Email(email = email))
+    fun email(current: AccountSecurityUiState, email: String, hasRealEmail: Boolean = false): AccountSecurityUiState =
+        current.copy(action = AccountSecurityActionState.Email(email = email, verifyingCurrentEmail = hasRealEmail))
 
     fun password(current: AccountSecurityUiState): AccountSecurityUiState =
         current.copy(action = AccountSecurityActionState.Password())
@@ -80,6 +83,8 @@ internal object AccountSecurityStateReducer {
                         error = null,
                     ),
                 )
+            } else if (action.currentEmail != null) {
+                current.copy(action = AccountSecurityActionState.Email(verifyingCurrentEmail = true))
             } else {
                 dismiss(current)
             }

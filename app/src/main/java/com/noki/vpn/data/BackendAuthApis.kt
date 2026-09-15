@@ -80,6 +80,8 @@ interface AccountSecurityApi {
         email: String,
         currentDeviceId: String?,
         currentDeviceKey: String?,
+        currentEmail: String?,
+        currentVerificationCode: String?,
     ): Int
 
     suspend fun changeAccountEmail(
@@ -88,6 +90,8 @@ interface AccountSecurityApi {
         verificationCode: String,
         currentDeviceId: String?,
         currentDeviceKey: String?,
+        currentEmail: String?,
+        currentVerificationCode: String?,
     ): BackendUser
 
     suspend fun changeAccountPassword(
