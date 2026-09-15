@@ -152,9 +152,13 @@ class BackendApiClient(
         email: String,
         currentDeviceId: String?,
         currentDeviceKey: String?,
+        currentEmail: String?,
+        currentVerificationCode: String?,
     ): Int = postJson(
         path = "/app/security/email-code",
-        payload = JSONObject().put("email", email),
+        payload = JSONObject().put("email", email)
+            .put("current_email", currentEmail)
+            .put("current_verification_code", currentVerificationCode),
         token = token,
         currentDeviceId = currentDeviceId,
         currentDeviceKey = currentDeviceKey,
@@ -166,12 +170,16 @@ class BackendApiClient(
         verificationCode: String,
         currentDeviceId: String?,
         currentDeviceKey: String?,
+        currentEmail: String?,
+        currentVerificationCode: String?,
     ): BackendUser = BackendUserResponseParser.parse(
         postJson(
             path = "/app/security/email",
             payload = JSONObject()
                 .put("email", email)
-                .put("verification_code", verificationCode),
+                .put("verification_code", verificationCode)
+                .put("current_email", currentEmail)
+                .put("current_verification_code", currentVerificationCode),
             token = token,
             currentDeviceId = currentDeviceId,
             currentDeviceKey = currentDeviceKey,

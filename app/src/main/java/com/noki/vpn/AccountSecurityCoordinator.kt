@@ -17,11 +17,16 @@ internal class AccountSecurityCoordinator(
     private val api: AccountSecurityApi,
     private val authSessionCoordinator: AuthSessionCoordinator,
 ) {
-    suspend fun sendEmailCode(context: AccountSecurityContext, email: String): Int {
+    suspend fun sendEmailCode(
+        context: AccountSecurityContext, email: String,
+        currentEmail: String?, currentVerificationCode: String?,
+    ): Int {
         context.requireOwner()
         return api.sendAccountEmailCode(
             token = context.accessToken,
             email = email,
+            currentEmail = currentEmail,
+            currentVerificationCode = currentVerificationCode,
             currentDeviceId = context.currentDeviceId,
             currentDeviceKey = context.currentDeviceKey,
         )
@@ -31,11 +36,15 @@ internal class AccountSecurityCoordinator(
         context: AccountSecurityContext,
         email: String,
         verificationCode: String,
+        currentEmail: String?,
+        currentVerificationCode: String?,
     ): BackendUser {
         context.requireOwner()
         return api.changeAccountEmail(
             token = context.accessToken,
             email = email,
+            currentEmail = currentEmail,
+            currentVerificationCode = currentVerificationCode,
             verificationCode = verificationCode,
             currentDeviceId = context.currentDeviceId,
             currentDeviceKey = context.currentDeviceKey,

@@ -17,8 +17,10 @@ internal class AccountSecurityUiWorkflow(
     private val publishState: (AppUiState) -> Unit,
     private val isInvitedDevice: () -> Boolean,
     private val currentAuthAttempt: () -> AuthSessionAttempt?,
-    private val sendEmailCode: suspend (AuthSessionAttempt, String) -> Int,
-    private val changeEmail: suspend (AuthSessionAttempt, String, String) -> BackendUser,
+    private val sendCurrentEmailCode: suspend (AuthSessionAttempt, String) -> Int,
+    private val verifyCurrentEmailCode: suspend (AuthSessionAttempt, String, String) -> Unit,
+    private val sendEmailCode: suspend (AuthSessionAttempt, String, String?, String?) -> Int,
+    private val changeEmail: suspend (AuthSessionAttempt, String, String, String?, String?) -> BackendUser,
     private val changePassword: suspend (AuthSessionAttempt, String) -> BackendUser,
     private val changeUsername: suspend (AuthSessionAttempt, String) -> BackendUser,
     private val applyUser: (BackendUser, Boolean) -> Unit,
@@ -38,7 +40,7 @@ internal class AccountSecurityUiWorkflow(
 
     fun updateEmail(value: String) {
         val action = currentState().accountSecurityState.action as? AccountSecurityActionState.Email ?: return
-        if (action.isLoading) return
+        if (action.isLoading || action.codeSent) return
         setAction(action.copy(email = value.take(320), error = null))
     }
 
@@ -54,7 +56,9 @@ internal class AccountSecurityUiWorkflow(
         if (operationJob != null || action.isLoading || action.cooldownSeconds > 0 || isInvitedDevice()) return
         val language = state.personalizationSettings.language
         val email = action.email.trim()
-        val validationError = AccountSecurityStateReducer.validateEmail(email, language)
+        val validationError = if (action.verifyingCurrentEmail && !email.equals(state.userProfile.email, ignoreCase = true)) {
+            tr(language, "Введите текущую почту аккаунта", "Enter your current account email")
+        } else AccountSecurityStateReducer.validateEmail(email, language)
         if (validationError != null) {
             setAction(action.copy(error = validationError))
             return
@@ -67,7 +71,10 @@ internal class AccountSecurityUiWorkflow(
             owner = owner,
             original = action,
             language = language,
-            request = { sendEmailCode(attempt, email) },
+            request = {
+                if (action.verifyingCurrentEmail) sendCurrentEmailCode(attempt, email)
+                else sendEmailCode(attempt, email, action.currentEmail, action.currentVerificationCode)
+            },
             onSuccess = { cooldown ->
                 val latest = currentState().accountSecurityState.action as? AccountSecurityActionState.Email
                     ?: return@launchOperation
@@ -90,7 +97,9 @@ internal class AccountSecurityUiWorkflow(
         if (operationJob != null || action.isLoading || !action.codeSent || isInvitedDevice()) return
         val language = state.personalizationSettings.language
         val email = action.email.trim()
-        val validationError = AccountSecurityStateReducer.validateEmail(email, language)
+        val validationError = if (action.verifyingCurrentEmail && !email.equals(state.userProfile.email, ignoreCase = true)) {
+            tr(language, "Введите текущую почту аккаунта", "Enter your current account email")
+        } else AccountSecurityStateReducer.validateEmail(email, language)
         if (validationError != null) {
             setAction(action.copy(error = validationError))
             return
@@ -108,8 +117,16 @@ internal class AccountSecurityUiWorkflow(
             owner = owner,
             original = action,
             language = language,
-            request = { changeEmail(attempt, email, code) },
-            onSuccess = { user -> applyUser(user, true) },
+            request = {
+                if (action.verifyingCurrentEmail) {
+                    verifyCurrentEmailCode(attempt, email, code)
+                    null
+                } else changeEmail(attempt, email, code, action.currentEmail, action.currentVerificationCode)
+            },
+            onSuccess = { user ->
+                if (user != null) applyUser(user, true)
+                else setAction(AccountSecurityActionState.Email(currentEmail = email, currentVerificationCode = code))
+            },
         )
     }
 

@@ -11,6 +11,76 @@ import org.junit.Test
 
 class AccountSecurityUiWorkflowTest {
     @Test
+    fun `email change verifies current address before allowing new address`() = runBlocking {
+        var state = AppUiState()
+        state = state.copy(
+            userProfile = state.userProfile.copy(email = "owner@example.com", hasRealEmail = true),
+            accountSecurityState = AccountSecurityStateReducer.email(AccountSecurityUiState(), "", true),
+        )
+        val calls = mutableListOf<String>()
+        var appliedUsers = 0
+        val workflow = AccountSecurityUiWorkflow(
+            scope = this, currentState = { state }, publishState = { state = it },
+            isInvitedDevice = { false }, currentAuthAttempt = { AuthSessionAttempt("access", 0) },
+            sendCurrentEmailCode = { _, email -> calls.add("current:$email"); 0 },
+            verifyCurrentEmailCode = { _, email, code ->
+                assertEquals("owner@example.com", email)
+                if (code != "123456") throw com.noki.vpn.data.BackendException("Invalid verification code", 400)
+                calls.add("verified")
+            },
+            sendEmailCode = { _, email, currentEmail, currentCode ->
+                assertEquals("owner@example.com", currentEmail)
+                assertEquals("123456", currentCode)
+                calls.add("new:$email"); 0
+            },
+            changeEmail = { _, email, code, currentEmail, currentCode ->
+                assertEquals("new@example.com", email)
+                assertEquals("654321", code)
+                assertEquals("owner@example.com", currentEmail)
+                assertEquals("123456", currentCode)
+                calls.add("changed")
+                com.noki.vpn.data.BackendUser(
+                    id = "user", username = "owner", email = email, avatarUrl = null,
+                    isActive = true, isAdmin = false, hasRealEmail = true,
+                    hasPassword = true, telegramLinked = false,
+                )
+            },
+            changePassword = { _, _ -> error("not used") },
+            changeUsername = { _, _ -> error("not used") },
+            applyUser = { _, _ -> appliedUsers++ },
+        )
+        workflow.updateEmail("other@example.com")
+        workflow.requestEmailCode()
+        assertEquals(emptyList<String>(), calls)
+        workflow.updateEmail("owner@example.com")
+        workflow.requestEmailCode(); yield()
+        workflow.updateEmail("other@example.com")
+        assertEquals("owner@example.com", (state.accountSecurityState.action as AccountSecurityActionState.Email).email)
+        workflow.updateEmailCode("000000")
+        workflow.submitEmail(); yield()
+        assertEquals(true, (state.accountSecurityState.action as AccountSecurityActionState.Email).verifyingCurrentEmail)
+        assertEquals(0, appliedUsers)
+        workflow.updateEmailCode("123456")
+        workflow.submitEmail(); yield()
+        val newStep = state.accountSecurityState.action as AccountSecurityActionState.Email
+        assertEquals(false, newStep.verifyingCurrentEmail)
+        assertEquals("", newStep.email)
+        assertEquals("", newStep.verificationCode)
+        assertEquals(false, newStep.codeSent)
+        workflow.updateEmail("new@example.com")
+        workflow.requestEmailCode(); yield()
+        workflow.updateEmailCode("654321")
+        workflow.submitEmail(); yield()
+        assertEquals(listOf("current:owner@example.com", "verified", "new:new@example.com", "changed"), calls)
+        assertEquals(1, appliedUsers)
+        val back = AccountSecurityStateReducer.back(AccountSecurityUiState(newStep)).action as AccountSecurityActionState.Email
+        assertEquals(true, back.verifyingCurrentEmail)
+        assertEquals(null, back.currentVerificationCode)
+        workflow.invalidate()
+    }
+
+
+    @Test
     fun `account username update uses registration input policy`() = runBlocking {
         var state = AppUiState(
             accountSecurityState = AccountSecurityStateReducer.username(
@@ -24,8 +94,10 @@ class AccountSecurityUiWorkflowTest {
             publishState = { state = it },
             isInvitedDevice = { false },
             currentAuthAttempt = { AuthSessionAttempt("access", 0) },
-            sendEmailCode = { _, _ -> error("not used") },
-            changeEmail = { _, _, _ -> error("not used") },
+            sendCurrentEmailCode = { _, _ -> error("not used") },
+            verifyCurrentEmailCode = { _, _, _ -> error("not used") },
+            sendEmailCode = { _, _, _, _ -> error("not used") },
+            changeEmail = { _, _, _, _, _ -> error("not used") },
             changePassword = { _, _ -> error("not used") },
             changeUsername = { _, _ -> error("not used") },
             applyUser = { _, _ -> error("not used") },
@@ -54,7 +126,9 @@ class AccountSecurityUiWorkflowTest {
             publishState = { state = it },
             isInvitedDevice = { false },
             currentAuthAttempt = { AuthSessionAttempt("access", 0) },
-            sendEmailCode = { _, _ ->
+            sendCurrentEmailCode = { _, _ -> error("not used") },
+            verifyCurrentEmailCode = { _, _, _ -> error("not used") },
+            sendEmailCode = { _, _, _, _ ->
                 started.complete(Unit)
                 try {
                     response.await()
@@ -62,7 +136,7 @@ class AccountSecurityUiWorkflowTest {
                     cancelled.complete(Unit)
                 }
             },
-            changeEmail = { _, _, _ -> error("not used") },
+            changeEmail = { _, _, _, _, _ -> error("not used") },
             changePassword = { _, _ -> error("not used") },
             changeUsername = { _, _ -> error("not used") },
             applyUser = { _, _ -> error("not used") },
@@ -103,12 +177,14 @@ class AccountSecurityUiWorkflowTest {
             publishState = { state = it },
             isInvitedDevice = { false },
             currentAuthAttempt = { AuthSessionAttempt("access", 0) },
-            sendEmailCode = { _, _ ->
+            sendCurrentEmailCode = { _, _ -> error("not used") },
+            verifyCurrentEmailCode = { _, _, _ -> error("not used") },
+            sendEmailCode = { _, _, _, _ ->
                 requestCount += 1
                 started.complete(Unit)
                 response.await()
             },
-            changeEmail = { _, _, _ -> error("not used") },
+            changeEmail = { _, _, _, _, _ -> error("not used") },
             changePassword = { _, _ -> error("not used") },
             changeUsername = { _, _ -> error("not used") },
             applyUser = { _, _ -> error("not used") },
@@ -137,8 +213,10 @@ class AccountSecurityUiWorkflowTest {
             publishState = { state = it },
             isInvitedDevice = { false },
             currentAuthAttempt = { AuthSessionAttempt("access", 0) },
-            sendEmailCode = { _, _ -> throw CancellationException("cancelled") },
-            changeEmail = { _, _, _ -> error("not used") },
+            sendCurrentEmailCode = { _, _ -> error("not used") },
+            verifyCurrentEmailCode = { _, _, _ -> error("not used") },
+            sendEmailCode = { _, _, _, _ -> throw CancellationException("cancelled") },
+            changeEmail = { _, _, _, _, _ -> error("not used") },
             changePassword = { _, _ -> error("not used") },
             changeUsername = { _, _ -> error("not used") },
             applyUser = { _, _ -> appliedUsers += 1 },
@@ -173,7 +251,9 @@ class AccountSecurityUiWorkflowTest {
             publishState = { state = it },
             isInvitedDevice = { false },
             currentAuthAttempt = { AuthSessionAttempt("access", 0) },
-            sendEmailCode = { _, _ ->
+            sendCurrentEmailCode = { _, _ -> error("not used") },
+            verifyCurrentEmailCode = { _, _, _ -> error("not used") },
+            sendEmailCode = { _, _, _, _ ->
                 requestCount += 1
                 when (requestCount) {
                     1 -> {
@@ -189,7 +269,7 @@ class AccountSecurityUiWorkflowTest {
                     else -> error("unexpected third request")
                 }
             },
-            changeEmail = { _, _, _ -> error("not used") },
+            changeEmail = { _, _, _, _, _ -> error("not used") },
             changePassword = { _, _ -> error("not used") },
             changeUsername = { _, _ -> error("not used") },
             applyUser = { _, _ -> error("not used") },
@@ -239,8 +319,10 @@ class AccountSecurityUiWorkflowTest {
             publishState = { state = it },
             isInvitedDevice = { false },
             currentAuthAttempt = { AuthSessionAttempt("access", 0) },
-            sendEmailCode = { _, _ -> error("not used") },
-            changeEmail = { _, _, _ -> error("not used") },
+            sendCurrentEmailCode = { _, _ -> error("not used") },
+            verifyCurrentEmailCode = { _, _, _ -> error("not used") },
+            sendEmailCode = { _, _, _, _ -> error("not used") },
+            changeEmail = { _, _, _, _, _ -> error("not used") },
             changePassword = { _, _ -> error("not used") },
             changeUsername = { _, _ -> error("not used") },
             applyUser = { _, _ -> error("not used") },

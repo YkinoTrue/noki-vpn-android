@@ -160,14 +160,20 @@ internal class AppUiRuntime(
         publishState = { uiState = it },
         isInvitedDevice = { isCurrentDeviceInvited() },
         currentAuthAttempt = { authSessionCoordinator.attempt() },
-        sendEmailCode = { attempt, email ->
+        sendCurrentEmailCode = { attempt, email ->
+            authSessionCoordinator.run(attempt) { backendApi.sendPasswordRecoveryCode(email) }
+        },
+        verifyCurrentEmailCode = { attempt, email, code ->
+            authSessionCoordinator.run(attempt) { backendApi.verifyPasswordRecoveryCode(email, code) }
+        },
+        sendEmailCode = { attempt, email, currentEmail, currentCode ->
             authSessionCoordinator.run(attempt) { token ->
-                accountSecurityCoordinator().sendEmailCode(accountSecurityContext(token), email)
+                accountSecurityCoordinator().sendEmailCode(accountSecurityContext(token), email, currentEmail, currentCode)
             }
         },
-        changeEmail = { attempt, email, code ->
+        changeEmail = { attempt, email, code, currentEmail, currentCode ->
             authSessionCoordinator.run(attempt) { token ->
-                accountSecurityCoordinator().changeEmail(accountSecurityContext(token), email, code)
+                accountSecurityCoordinator().changeEmail(accountSecurityContext(token), email, code, currentEmail, currentCode)
             }
         },
         changePassword = { attempt, password ->
