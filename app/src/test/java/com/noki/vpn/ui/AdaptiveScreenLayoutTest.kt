@@ -124,6 +124,27 @@ class AdaptiveScreenLayoutTest {
     }
 
     @Test
+    fun serverListEnds24DpAboveHandleAtDifferentScales() {
+        for (scale in listOf(1f, 1.4f)) {
+            val countries = (1..10).map { index ->
+                com.noki.vpn.data.ServerLocation("c$index", "LV", "Страна $index", "Riga", "example.test", isOnline = true)
+            }
+            render {
+                HomeServerDropdownOverlay(Modifier.fillMaxSize(), true, scale, AppLanguage.RU,
+                    countries, null, null, false, false, {}, { _, _ -> }, com.noki.vpn.data.UserProfile())
+            }.use {
+                val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+                val list = compose.onNode(androidx.compose.ui.test.hasScrollAction(), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                val density = activity.resources.displayMetrics.density
+                val handleTop = root.bottom - (NokiUiKitPolicy.homeServerDropdownHandleBottomPaddingDp +
+                    NokiUiKitPolicy.homeServerDropdownHandleHeightDp) * scale * density
+                assertEquals("Visible list must reach the handle with a 24dp gap", 24f, (handleTop - list.bottom) / density, 1f)
+                saveImage("server-list-extent-$scale")
+            }
+        }
+    }
+
+    @Test
     @Config(qualifiers = "w360dp-h800dp-xxhdpi")
     fun yearlyPriceAndDiscountFitNarrowCard() = render {
         Box(Modifier.width(320.dp).padding(20.dp)) {

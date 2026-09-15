@@ -27,8 +27,7 @@ internal object NokiUiKitPolicy {
     const val homeServerDropdownHandleHeightDp = 5f
     const val homeServerDropdownHandleTouchHeightDp = 56f
     const val homeServerDropdownHandleBottomPaddingDp = 20f
-    const val homeServerDropdownContentClipBottomInsetDp = 22f
-    const val homeServerDropdownListBottomReserveDp = 90f
+    const val homeServerDropdownContentHandleGapDp = 24f
     const val homeServerLazyItemSurfaceAlpha = 0.05f
     const val homeMetricsHeightDp = 120f
     const val homeMetricsColumnWidthDp = 174.1467f

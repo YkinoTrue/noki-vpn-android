@@ -88,8 +88,7 @@ internal fun HomeServerDropdownOverlay(
             modifier = contentModifier
                 .fillMaxWidth()
                 .padding(horizontal = designDp(NokiUiKitPolicy.homeServerItemHorizontalPaddingDp, scale))
-                .padding(top = designDp(HOME_SERVER_DROPDOWN_FIRST_ITEM_TOP_DP, scale))
-                .padding(bottom = designDp(NokiUiKitPolicy.homeServerDropdownListBottomReserveDp, scale)),
+                .padding(top = designDp(HOME_SERVER_DROPDOWN_FIRST_ITEM_TOP_DP, scale)),
             verticalArrangement = Arrangement.spacedBy(designDp(NokiUiKitPolicy.homeServerItemGapDp, scale)),
             contentPadding = PaddingValues(bottom = designDp(0f, scale)),
         ) {
@@ -347,7 +346,12 @@ internal fun NokiGlassSheetOverlay(
         val sheetVisualModifier = sheetModifier
             .onSizeChanged { sheetHeightPx = it.height.toFloat() }
             .offset { IntOffset(0, sheetDragOffset.value.roundToInt()) }
-        val contentClipInset = designDp(NokiUiKitPolicy.homeServerDropdownContentClipBottomInsetDp, scale)
+        val contentClipInset = designDp(
+            NokiUiKitPolicy.homeServerDropdownHandleBottomPaddingDp +
+                NokiUiKitPolicy.homeServerDropdownHandleHeightDp -
+                NokiUiKitPolicy.homeServerDropdownSheetBottomSpaceDp,
+            scale,
+        ) + NokiUiKitPolicy.homeServerDropdownContentHandleGapDp.dp
         val sheetContentClipModifier = sheetVisualModifier.padding(bottom = contentClipInset)
         Box(
             modifier = Modifier
