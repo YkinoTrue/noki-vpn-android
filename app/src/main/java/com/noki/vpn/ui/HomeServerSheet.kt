@@ -1,7 +1,6 @@
 package com.noki.vpn.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
@@ -143,8 +142,8 @@ internal fun HomeServerDropdownOverlay(
                             scale = scale,
                             selected = countrySelected,
                         )
-                        .clip(shape)
-                        .animateContentSize(),
+                        // Resize once: animating the glass bounds reallocates blur/lens layers every frame.
+                        .clip(shape),
                 ) {
                     HomeServerMenuItem(
                         location = entry.location,

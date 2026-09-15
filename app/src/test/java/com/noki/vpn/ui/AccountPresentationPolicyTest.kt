@@ -379,11 +379,11 @@ class AccountPresentationPolicyTest {
             tier = "premium",
             title = "Premium",
             color = null,
-        ).copy(monthlyPriceRub = 400)
+        ).copy(monthlyPriceRub = 500)
         val yearly = monthly.copy(
             code = "premium-yearly",
-            monthlyPriceRub = 4_200,
-            yearlyMonthlyPriceRub = 350,
+            monthlyPriceRub = 5_100,
+            yearlyMonthlyPriceRub = 425,
         )
 
         assertEquals(
@@ -394,8 +394,23 @@ class AccountPresentationPolicyTest {
                 cycle = BillingCycle.YEARLY,
             ),
         )
-        assertEquals("400 ₽", PlanCatalogPolicy.checkoutTotalLabel(monthly, BillingCycle.MONTHLY, AppLanguage.RU))
-        assertEquals("4200 ₽", PlanCatalogPolicy.checkoutTotalLabel(yearly, BillingCycle.YEARLY, AppLanguage.RU))
+        assertEquals("500 ₽", PlanCatalogPolicy.checkoutTotalLabel(monthly, BillingCycle.MONTHLY, AppLanguage.RU))
+        assertEquals("5100 ₽", PlanCatalogPolicy.checkoutTotalLabel(yearly, BillingCycle.YEARLY, AppLanguage.RU))
+        assertEquals(
+            PlanCatalogPolicy.PriceLabel("500 ₽ / месяц", null),
+            PlanCatalogPolicy.priceLabel(monthly, BillingCycle.MONTHLY, AppLanguage.RU),
+        )
+        assertEquals(
+            PlanCatalogPolicy.PriceLabel("5100 ₽ / год", "-15%"),
+            PlanCatalogPolicy.priceLabel(yearly, BillingCycle.YEARLY, AppLanguage.RU),
+        )
+        assertEquals(
+            PlanCatalogPolicy.PriceLabel("5100 rub / year", "-15%"),
+            PlanCatalogPolicy.priceLabel(yearly, BillingCycle.YEARLY, AppLanguage.EN),
+        )
+        assertEquals(null, PlanCatalogPolicy.priceLabel(
+            yearly.copy(monthlyPriceRub = 0), BillingCycle.YEARLY, AppLanguage.RU,
+        ).discount)
     }
 
     private fun state(
