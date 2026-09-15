@@ -102,6 +102,47 @@ class AdaptiveScreenLayoutTest {
     }
 
     @Test
+    fun countryExpansionKeepsNodeSelectionAndCollapseWorking() {
+        val server = com.noki.vpn.data.VpnServer("lv-1", "Latvia 1", "LV", "lv", "example.test", 443, true)
+        val country = com.noki.vpn.data.ServerLocation("lv", "LV", "Латвия", "Riga", "example.test", isOnline = true, servers = listOf(server))
+        var selected: Pair<String, com.noki.vpn.data.ServerSelectionMode>? = null
+        render {
+            HomeServerDropdownOverlay(Modifier.fillMaxSize(), true, 1f, AppLanguage.RU,
+                listOf(country), null, null, false, false, {}, { id, mode -> selected = id to mode },
+                com.noki.vpn.data.UserProfile())
+        }.use {
+            compose.onNodeWithText("Latvia 1").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Серверы: Латвия").performClick()
+            compose.onNodeWithText("Latvia 1").assertIsDisplayed().performClick()
+            assertEquals("lv-1" to com.noki.vpn.data.ServerSelectionMode.SERVER, selected)
+            compose.onNodeWithContentDescription("Серверы: Латвия").performClick()
+            compose.onNodeWithText("Latvia 1").assertDoesNotExist()
+            compose.onNodeWithText("Латвия").performClick()
+            assertEquals("lv" to com.noki.vpn.data.ServerSelectionMode.COUNTRY, selected)
+            saveImage("server-country-collapsed")
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-xxhdpi")
+    fun yearlyPriceAndDiscountFitNarrowCard() = render {
+        Box(Modifier.width(320.dp).padding(20.dp)) {
+            PlanPriceLine(
+                com.noki.vpn.data.PlanSummary("pro_yearly", "pro", "Pro", 6, 4000.0, "4 ТБ", 5100, 425, features = emptyList()),
+                com.noki.vpn.data.BillingCycle.YEARLY, AppLanguage.RU, 1f,
+            )
+        }
+    }.use {
+        val price = compose.onNodeWithText("5100 ₽ / год").assertIsDisplayed()
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        price.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertEquals("Annual price must fit on one line", 1, layouts.single().lineCount)
+        val discount = compose.onNodeWithText("-15%").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(discount.left >= price.fetchSemanticsNode().boundsInRoot.right)
+        saveImage("annual-price-narrow")
+    }
+
+    @Test
     fun securityAboutSheetShowsCurrentVersionAndLinks() = render {
         SecurityAboutSheet(AppLanguage.RU, nokiAdaptiveMetrics(512.dp), {})
     }.use {
@@ -347,7 +388,7 @@ class AdaptiveScreenLayoutTest {
     }
 
     @Test fun checkoutPaymentMethodsAreExclusive() {
-        val plan = com.noki.vpn.data.PlanSummary("pro_monthly", "pro", "Pro", 6, 4000.0, "4 ТБ", 500, 400,
+        val plan = com.noki.vpn.data.PlanSummary("pro_yearly", "pro", "Pro", 6, 4000.0, "4 ТБ", 5100, 425,
             features = listOf("4 ТБ", "6 устройств", "Скорость до 200 Мбит/с", "Приватный DNS", "Блокировка рекламы"))
         render {
             var payment by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(com.noki.vpn.PaymentCheckoutState(
@@ -355,13 +396,15 @@ class AdaptiveScreenLayoutTest {
                     com.noki.vpn.data.BackendPaymentMethod(null, "card", "Карта", true),
                     com.noki.vpn.data.BackendPaymentMethod(2, "sbp", "СБП", true),
                     com.noki.vpn.data.BackendPaymentMethod(13, "crypto", "Криптовалюта", true))), methodCode = "card")) }
-            PlanCheckoutScreen(plan, "Free", false, com.noki.vpn.data.BillingCycle.MONTHLY, AppLanguage.RU, {}, null, false,
+            PlanCheckoutScreen(plan, "Free", false, com.noki.vpn.data.BillingCycle.YEARLY, AppLanguage.RU, {}, null, false,
                 470f / 370f, Modifier.padding(horizontal = 21.dp).width(470.dp).verticalScroll(rememberScrollState()).padding(top = 20.dp, bottom = 24.dp),
                 payment, { payment = payment.copy(methodCode = it) }, {}, {}, {}, {})
         }.use {
             val heading = compose.onNodeWithText("Текущий тариф").fetchSemanticsNode().boundsInRoot
             assertTrue("Plan transition must be at the top", heading.top < 320f)
             saveImage("checkout-top-wide")
+            compose.onNodeWithText("5100 ₽").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("-15%").assertIsDisplayed()
             compose.onNodeWithText("Карта").performScrollTo().assertIsSelected()
             compose.onNodeWithText("СБП").performScrollTo().performClick().assertIsSelected()
             compose.onNodeWithText("Карта").assertIsNotSelected()

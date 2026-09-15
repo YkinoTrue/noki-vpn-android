@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material.icons.rounded.CurrencyBitcoin
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -417,11 +418,10 @@ internal fun PlanPriceLine(
     scale: Float,
 ) {
     val label = PlanCatalogPolicy.priceLabel(plan, cycle, language)
-    val primaryModifier = if (label.secondary == null) Modifier.fillMaxWidth() else Modifier
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(settingsDp(10f, scale)),
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         SettingsText(
             text = label.primary,
@@ -431,21 +431,28 @@ internal fun PlanPriceLine(
             color = SettingsTextPrimary,
             scale = scale,
             textAlign = TextAlign.Start,
-            modifier = primaryModifier,
+            modifier = Modifier.weight(1f),
         )
-        label.secondary?.let { secondary ->
-            SettingsText(
-                text = secondary,
-                fontSize = 16f,
-                lineHeight = 20f,
-                letterSpacing = 0.12f,
-                color = SettingsTextSecondary,
-                scale = scale,
-                textAlign = TextAlign.Start,
-                modifier = Modifier.weight(1f),
-            )
+        label.discount?.let { discount ->
+            PlanDiscountBadge(discount, scale)
         }
     }
+}
+
+@Composable
+private fun PlanDiscountBadge(text: String, scale: Float) {
+    SettingsText(
+        text = text,
+        fontSize = 12f,
+        lineHeight = 16f,
+        letterSpacing = 0f,
+        fontWeight = FontWeight.SemiBold,
+        color = SettingsAccentPrimary,
+        scale = scale,
+        modifier = Modifier
+            .background(SettingsAccentPrimary.copy(alpha = 0.14f), RoundedCornerShape(settingsDp(6f, scale)))
+            .padding(horizontal = settingsDp(8f, scale), vertical = settingsDp(4f, scale)),
+    )
 }
 
 @Composable
@@ -458,13 +465,13 @@ internal fun PlanFeatureRow(
         horizontalArrangement = Arrangement.spacedBy(settingsDp(10f, scale)),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(
+        Icon(
+            imageVector = Icons.Rounded.Check,
+            contentDescription = null,
+            tint = SettingsTextPrimary,
             modifier = Modifier
-                .padding(top = settingsDp(7f, scale))
-                .width(settingsDp(5f, scale))
-                .height(settingsDp(5f, scale))
-                .clip(CircleShape)
-                .background(SettingsTextPrimary),
+                .padding(top = settingsDp(2f, scale))
+                .size(settingsDp(17f, scale)),
         )
         SettingsText(
             text = text,
@@ -764,12 +771,21 @@ internal fun PlanCheckoutScreen(
                     fontSize = 12f, lineHeight = 15f, letterSpacing = 0f,
                     color = SettingsTextSecondary, scale = scale, modifier = Modifier.fillMaxWidth(),
                 )
-                SettingsText(
-                    text = total, fontSize = 36f, lineHeight = 43f, letterSpacing = 0f,
-                    textAlign = TextAlign.Start,
-                    color = SettingsTextPrimary, scale = scale, modifier = Modifier.fillMaxWidth(),
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(settingsDp(10f, scale)),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SettingsText(
+                        text = total, fontSize = 36f, lineHeight = 43f, letterSpacing = 0f,
+                        textAlign = TextAlign.Start,
+                        color = SettingsTextPrimary, scale = scale, modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    PlanCatalogPolicy.priceLabel(plan, cycle, language).discount?.let { discount ->
+                        PlanDiscountBadge(discount, scale)
+                    }
+                }
                 SettingsText(
                     text = if (cycle == BillingCycle.MONTHLY) tr(language, "за 1 месяц", "for 1 month") else tr(language, "за 1 год", "for 1 year"),
                     textAlign = TextAlign.Start,

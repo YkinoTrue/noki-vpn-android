@@ -89,4 +89,12 @@ class GlassRenderingContractTest {
         assertTrue(dialog.contains("decorFitsSystemWindows = false"))
     }
 
+    @Test
+    fun countryDisclosureDoesNotAnimateGlassBoundsOrCaptureItself() {
+        val sheet = function(source("HomeServerSheet"), "HomeServerDropdownOverlay")
+        assertFalse(sheet.contains("animateContentSize"))
+        assertFalse(sheet.contains("layerBackdrop("))
+        assertTrue(sheet.contains("backdrop = serverRowsBackdrop"))
+    }
+
 }

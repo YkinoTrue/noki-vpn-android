@@ -3,7 +3,7 @@ package com.noki.vpn.data
 object PlanCatalogPolicy {
     data class PriceLabel(
         val primary: String,
-        val secondary: String?,
+        val discount: String?,
     )
 
     fun visiblePlans(
@@ -50,15 +50,14 @@ object PlanCatalogPolicy {
     ): PriceLabel {
         val yearlyTotal = yearTotalRub(plan, cycle)
         if (cycle == BillingCycle.YEARLY && yearlyTotal != null) {
-            val monthly = monthlyPriceRub(plan, cycle)
             return PriceLabel(
-                primary = "${priceAmount(monthly, language)}/${monthLabel(language)}",
-                secondary = "(${priceAmount(yearlyTotal, language)}/${yearLabel(language)})",
+                primary = "${priceAmount(yearlyTotal, language)} / ${yearLabel(language)}",
+                discount = if (yearlyTotal > 0 && plan.yearlyMonthlyPriceRub != null) "-15%" else null,
             )
         }
         return PriceLabel(
-            primary = "${priceAmount(monthlyPriceRub(plan, cycle), language)}/${monthLabel(language)}",
-            secondary = null,
+            primary = "${priceAmount(monthlyPriceRub(plan, cycle), language)} / ${monthLabel(language)}",
+            discount = null,
         )
     }
 
