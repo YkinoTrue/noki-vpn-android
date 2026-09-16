@@ -2,6 +2,7 @@ package com.noki.vpn
 
 import com.noki.vpn.data.BackendPayment
 import com.noki.vpn.data.BackendPaymentConfig
+import com.noki.vpn.data.BackendPromo
 import com.noki.vpn.ui.tr
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,14 @@ data class PaymentCheckoutState(
     val launchUrl: String? = null,
     val error: String? = null,
     val result: PaymentCheckoutResult? = null,
+    val history: List<BackendPayment> = emptyList(),
+    val historyLoading: Boolean = false,
+    val historyError: String? = null,
+    val promo: BackendPromo? = null,
+    val promoPlanCode: String? = null,
+    val promoBusy: Boolean = false,
+    val promoError: String? = null,
+    val promoMessage: String? = null,
 )
 
 enum class PaymentCheckoutResult {
@@ -42,22 +51,75 @@ internal class PaymentCheckoutWorkflow(
     private val currentAuthAttempt: () -> AuthSessionAttempt?,
     private val isCurrent: (AuthSessionAttempt) -> Boolean,
     private val loadConfig: suspend () -> BackendPaymentConfig,
-    private val create: suspend (AuthSessionAttempt, String, Int?) -> BackendPayment,
+    private val create: suspend (AuthSessionAttempt, String, Int?, String?) -> BackendPayment,
     private val loadPayments: suspend (AuthSessionAttempt) -> List<BackendPayment>,
     private val restorePaymentId: () -> String?,
     private val savePaymentId: (String?) -> Unit,
     private val onPaid: () -> Unit,
+    private val applyPromo: suspend (AuthSessionAttempt, String, String?, Boolean) -> BackendPromo,
     private val pollDelayMillis: Long = 3_000,
 ) {
     private var generation = 0L
     private var configJob: Job? = null
     private var submitJob: Job? = null
     private var statusJob: Job? = null
+    private var historyJob: Job? = null
+    private var promoJob: Job? = null
+    private var promoRevision = 0L
     private var statusRevision = 0L
     private val state get() = currentState().paymentCheckout
 
     private fun update(value: PaymentCheckoutState) {
         publishState(currentState().copy(paymentCheckout = value))
+    }
+
+    fun clearPromo() {
+        promoRevision++
+        promoJob?.cancel()
+        promoJob = null
+        update(state.copy(promo = null, promoPlanCode = null, promoBusy = false, promoError = null, promoMessage = null))
+    }
+
+    fun submitPromo(code: String, planCode: String?) {
+        if (promoJob != null || submitJob != null || code.isBlank() || currentState().currentDeviceAccessRole.equals("invited", true)) return
+        val attempt = currentAuthAttempt() ?: return
+        val owner = generation
+        val revision = ++promoRevision
+        update(state.copy(promoBusy = true, promo = null, promoError = null, promoMessage = null, promoPlanCode = planCode))
+        promoJob = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                var result = applyPromo(attempt, code.trim(), planCode, planCode == null)
+                if (owner != generation || revision != promoRevision || !isCurrent(attempt)) return@launch
+                if (planCode != null && result.kind == "days") result = applyPromo(attempt, code.trim(), null, true)
+                if (owner != generation || revision != promoRevision || !isCurrent(attempt)) return@launch
+                val message = if (result.kind == "days") tr(currentState().personalizationSettings.language, "Добавлено дней: ${result.value}", "Days added: ${result.value}")
+                    else tr(currentState().personalizationSettings.language, "Скидка по промокоду ${result.value}%", "Promo discount ${result.value}%")
+                update(state.copy(promoBusy = false, promo = result, promoMessage = message))
+                if (result.kind == "days") onPaid()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (owner == generation && revision == promoRevision && isCurrent(attempt)) update(state.copy(promoBusy = false, promoError = readable(error)))
+            } finally { if (owner == generation && revision == promoRevision) promoJob = null }
+        }.also { it.start() }
+    }
+
+    fun loadHistory() {
+        if (historyJob != null || currentState().currentDeviceAccessRole.equals("invited", true)) return
+        val attempt = currentAuthAttempt() ?: return
+        val owner = generation
+        update(state.copy(historyLoading = true, historyError = null))
+        historyJob = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val rows = loadPayments(attempt)
+                if (owner == generation && isCurrent(attempt)) update(state.copy(history = rows, historyLoading = false))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (owner == generation && isCurrent(attempt)) update(state.copy(historyLoading = false, historyError = readable(error)))
+            } finally {
+                if (owner == generation) historyJob = null
+            }
+        }.also { it.start() }
     }
 
     fun prepare() {
@@ -88,7 +150,7 @@ internal class PaymentCheckoutWorkflow(
     }
 
     fun submit(planCode: String) {
-        if (submitJob != null || currentState().currentDeviceAccessRole.equals("invited", true)) return
+        if (submitJob != null || state.promoBusy || currentState().currentDeviceAccessRole.equals("invited", true)) return
         val config = state.config ?: return
         val method = config.methods.firstOrNull { it.code == state.methodCode && it.enabled } ?: return
         if (!config.configured || !config.checkoutEnabled) return
@@ -96,10 +158,11 @@ internal class PaymentCheckoutWorkflow(
         val attempt = currentAuthAttempt() ?: return
         val owner = generation
         stopChecking()
+        val promoCode = state.promo?.takeIf { it.kind == "discount" && state.promoPlanCode == planCode }?.code
         update(state.copy(isSubmitting = true, error = null, launchUrl = null, result = null))
         submitJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val payment = create(attempt, planCode, method.id)
+                val payment = create(attempt, planCode, method.id, promoCode)
                 if (owner != generation || !isCurrent(attempt)) return@launch
                 require(payment.planCode == planCode && payment.publicId.isNotBlank()) { "invalid_payment_response" }
                 savePaymentId(payment.publicId)
@@ -204,6 +267,9 @@ internal class PaymentCheckoutWorkflow(
 
     fun invalidate() {
         generation++
+        clearPromo()
+        historyJob?.cancel()
+        historyJob = null
         configJob?.cancel()
         configJob = null
         submitJob?.cancel()

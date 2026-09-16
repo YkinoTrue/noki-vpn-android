@@ -49,7 +49,8 @@ class BackendPaymentContractTest {
         assertEquals(13, payloads[2].getInt("payment_method"))
         payloads.forEach {
             assertEquals("pro_yearly", it.getString("plan_code"))
-            assertEquals(setOf("plan_code", "payment_method"), it.keys().asSequence().toSet())
+            assertTrue(it.isNull("promo_code"))
+            assertEquals(setOf("plan_code", "payment_method", "promo_code"), it.keys().asSequence().toSet())
         }
     }
 }

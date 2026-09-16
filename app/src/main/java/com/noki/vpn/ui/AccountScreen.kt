@@ -159,6 +159,64 @@ internal data class AccountRowSpec(
     }
 }
 
+@Composable
+private fun AccountPaymentHistory(
+    state: AppUiState,
+    scale: Float,
+    backdrop: LayerBackdrop?,
+    liveGlassEnabled: Boolean,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val language = state.personalizationSettings.language
+    val history = state.paymentCheckout
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    var browserError by remember { mutableStateOf(false) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            modifier = Modifier.fillMaxWidth(0.92f).heightIn(max = 620.dp)
+                .accountGlassSurface(RoundedCornerShape(24.dp), backdrop, liveGlassEnabled, scale)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(tr(language, "История платежей", "Payment history"), color = AccountTextPrimary, modifier = Modifier.weight(1f), fontSize = 20.sp)
+                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, tr(language, "Закрыть", "Close"), tint = AccountTextPrimary) }
+            }
+            androidx.compose.material3.TextButton(onClick = onRefresh, enabled = !history.historyLoading) {
+                Text(tr(language, "Обновить", "Refresh"), color = AccountTextPrimary)
+            }
+            if (history.historyLoading) Text(tr(language, "Загрузка…", "Loading…"), color = AccountTextSecondary)
+            history.historyError?.let { Text(it, color = AccountError) }
+            if (browserError) Text(tr(language, "Не удалось открыть оплату", "Could not open payment"), color = AccountError)
+            if (!history.historyLoading && history.historyError == null && history.history.isEmpty()) {
+                Text(tr(language, "Платежей пока нет", "No payments yet"), color = AccountTextSecondary)
+            }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(history.history, key = { it.publicId }) { payment ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(payment.description ?: payment.planCode, color = AccountTextPrimary, fontWeight = FontWeight.Medium)
+                        Text("${payment.amountRub} ₽ · ${payment.createdAt?.take(10).orEmpty()}", color = AccountTextSecondary)
+                        Text(when (payment.status) {
+                            "paid" -> tr(language, "Оплачен", "Paid")
+                            "pending" -> tr(language, "Ожидает оплаты", "Awaiting payment")
+                            "canceled" -> tr(language, "Отменён", "Canceled")
+                            "refunded" -> tr(language, "Возврат", "Refunded")
+                            "failed" -> tr(language, "Ошибка оплаты", "Payment failed")
+                            else -> tr(language, "Создаётся", "Creating")
+                        }, color = AccountTextSecondary)
+                        if (payment.status == "pending" && payment.paymentUrl?.let { com.noki.vpn.isSafePaymentUrl(it) } == true) {
+                            androidx.compose.material3.TextButton(onClick = {
+                                browserError = runCatching { uriHandler.openUri(payment.paymentUrl!!) }.isFailure
+                            }) { Text(tr(language, "Продолжить оплату", "Continue payment"), color = AccountTextPrimary) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private const val ACCOUNT_DELETE_HOLD_MILLIS = 4_000
 
 @Composable
@@ -172,6 +230,9 @@ fun AccountScreen(
     onSupportClicked: () -> Unit,
     onSecurityClicked: () -> Unit,
     onNotificationsClicked: () -> Unit,
+    onPaymentHistoryClicked: () -> Unit,
+    onApplyPromoCode: (String) -> Unit,
+    onClearPromoCode: () -> Unit,
     onNotificationDeleted: (String) -> Unit,
     onDeleteAccountClicked: () -> Unit,
     onAccessDenied: () -> Unit,
@@ -183,7 +244,11 @@ fun AccountScreen(
     var showTrafficExplanation by rememberSaveable { mutableStateOf(false) }
     var showPromoDialog by rememberSaveable { mutableStateOf(false) }
     var showNotificationHistory by rememberSaveable { mutableStateOf(false) }
+    var showPaymentHistory by rememberSaveable { mutableStateOf(false) }
     var promoCode by rememberSaveable { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(state.paymentCheckout.promoMessage) {
+        if (state.paymentCheckout.promo?.kind == "days" && state.paymentCheckout.promoMessage != null) showPromoDialog = false
+    }
 
     BackHandler(enabled = showTrafficExplanation || showPromoDialog || showNotificationHistory) {
         when {
@@ -360,7 +425,7 @@ fun AccountScreen(
                     iconWidth = 18,
                     iconHeight = 22,
                     enabled = accountActionsEnabled,
-                    onClick = {},
+                    onClick = { onPaymentHistoryClicked(); showPaymentHistory = true },
                 ),
                 AccountRowSpec(
                     title = tr(language, "Промокод", "Promo code"),
@@ -368,7 +433,7 @@ fun AccountScreen(
                     iconWidth = 26,
                     iconHeight = 17,
                     enabled = accountActionsEnabled,
-                    onClick = { showPromoDialog = true },
+                    onClick = { onClearPromoCode(); promoCode = ""; showPromoDialog = true },
                 ),
                 AccountRowSpec(
                     title = tr(language, "Устройства", "Devices"),
@@ -415,6 +480,16 @@ fun AccountScreen(
             )
         }
 
+        state.paymentCheckout.promoMessage?.let { message ->
+            Text(message, color = AccountTextPrimary, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp))
+        }
+
+        if (showPaymentHistory) {
+            AccountPaymentHistory(state, scale, sharedBackdrop, liveGlassEnabled, onPaymentHistoryClicked) {
+                showPaymentHistory = false
+            }
+        }
+
         if (showPromoDialog) {
             AccountPromoDialog(
                 language = language,
@@ -424,6 +499,9 @@ fun AccountScreen(
                 liveGlassEnabled = liveGlassEnabled,
                 onValueChanged = { promoCode = it },
                 onDismiss = { showPromoDialog = false },
+                onConfirm = { onApplyPromoCode(promoCode) },
+                error = state.paymentCheckout.promoError,
+                isLoading = state.paymentCheckout.promoBusy,
             )
         }
 
@@ -1130,6 +1208,9 @@ private fun AccountPromoDialog(
     liveGlassEnabled: Boolean,
     onValueChanged: (String) -> Unit,
     onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    error: String?,
+    isLoading: Boolean,
 ) {
     SettingsCompactInputDialog(
         value = value,
@@ -1141,7 +1222,10 @@ private fun AccountPromoDialog(
         backdrop = backdrop,
         liveGlassEnabled = liveGlassEnabled,
         onDismiss = onDismiss,
-        onConfirm = {},
+        onConfirm = onConfirm,
+        error = error,
+        isLoading = isLoading,
+        maxLength = 32,
     )
 }
 

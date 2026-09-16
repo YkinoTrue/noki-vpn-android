@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material.icons.rounded.CurrencyBitcoin
@@ -37,6 +38,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
@@ -677,6 +680,8 @@ internal fun PlanCheckoutScreen(
     scale: Float,
     modifier: Modifier,
     checkout: PaymentCheckoutState,
+    onApplyPromo: (String) -> Unit,
+    onClearPromo: () -> Unit,
     onMethodChanged: (String) -> Unit,
     onPay: () -> Unit,
     onRetryConfig: () -> Unit,
@@ -684,7 +689,10 @@ internal fun PlanCheckoutScreen(
     onReopen: () -> Unit,
 ) {
     val planColor = settingsPlanColor(plan) ?: SettingsAccentPrimary
-    val total = PlanCatalogPolicy.checkoutTotalLabel(plan, cycle, language)
+    var promoCode by remember(plan.code) { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(plan.code) { onClearPromo() }
+    val promoAmount = checkout.promo?.takeIf { checkout.promoPlanCode == plan.code && it.kind == "discount" }?.amountRub
+    val total = promoAmount?.let { "$it ₽" } ?: PlanCatalogPolicy.checkoutTotalLabel(plan, cycle, language)
     val panelShape = RoundedCornerShape(settingsDp(24f, scale))
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(settingsDp(20f, scale))) {
         SettingsText(
@@ -743,7 +751,7 @@ internal fun PlanCheckoutScreen(
             CheckoutBillingCycleSelector(
                 cycle = cycle, language = language, activeColor = planColor, scale = scale,
                 backdrop = backdrop, liveGlassEnabled = liveGlassEnabled,
-                onCycleChanged = { if (!checkout.isSubmitting) onCycleChanged(it) },
+                onCycleChanged = { if (!checkout.isSubmitting && !checkout.promoBusy) onCycleChanged(it) },
             )
             SettingsText(
                 text = tr(language, "Что входит", "What's included"),
@@ -794,6 +802,13 @@ internal fun PlanCheckoutScreen(
                 )
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(SettingsStroke))
+            SettingsCompactInputField(value = promoCode, onValueChange = { promoCode = it; onClearPromo() },
+                placeholder = tr(language, "Промокод", "Promo code"), scale = scale,
+                enabled = !checkout.promoBusy && !checkout.isSubmitting, maxLength = 32)
+            androidx.compose.material3.TextButton(onClick = { onApplyPromo(promoCode) }, enabled = promoCode.isNotBlank() && !checkout.promoBusy && !checkout.isSubmitting) {
+                Text(tr(language, if (checkout.promoBusy) "Проверяем…" else "Применить", if (checkout.promoBusy) "Checking…" else "Apply"), color = SettingsTextPrimary)
+            }
+            (checkout.promoError ?: checkout.promoMessage)?.let { Text(it, color = if (checkout.promoError != null) SettingsError else SettingsTextPrimary) }
             SettingsText(
                 text = tr(language, "Способ оплаты", "Payment method"),
                 textAlign = TextAlign.Start,
@@ -843,7 +858,7 @@ internal fun PlanCheckoutScreen(
             PlanActionButton(
                 text = if (checkout.isSubmitting) tr(language, "Создаём платёж…", "Creating payment…") else tr(language, "Оплатить $total", "Pay $total"), scale = scale,
                 modifier = Modifier.fillMaxWidth(), backdrop = backdrop, liveGlassEnabled = liveGlassEnabled,
-                enabled = !checkout.isSubmitting && !checkout.isLoading && checkout.config?.configured == true &&
+                enabled = !checkout.isSubmitting && !checkout.promoBusy && !checkout.isLoading && checkout.config?.configured == true &&
                     checkout.config.checkoutEnabled && checkout.config.methods.any { it.code == checkout.methodCode && it.enabled },
                 onClick = onPay,
             )
@@ -867,7 +882,7 @@ internal fun PlanCheckoutScreen(
                 PlanActionButton(tr(language, "Повторить загрузку", "Retry"), scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onRetryConfig)
             }
             if (checkout.payment?.status == "pending") {
-                PlanActionButton(tr(language, "Открыть оплату", "Open payment"), scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onReopen, !checkout.isSubmitting)
+                PlanActionButton(tr(language, "Продолжить платёж на ${checkout.payment.amountRub} ₽", "Continue payment of ${checkout.payment.amountRub} ₽"), scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onReopen, !checkout.isSubmitting && !checkout.promoBusy)
                 PlanActionButton(if (checkout.isChecking) tr(language, "Проверяем…", "Checking…") else tr(language, "Проверить статус", "Check status"),
                     scale, Modifier.fillMaxWidth(), backdrop, liveGlassEnabled, onCheckStatus, !checkout.isChecking && !checkout.isSubmitting)
             }

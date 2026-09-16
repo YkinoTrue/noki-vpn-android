@@ -66,13 +66,22 @@ class BackendApiClient(
         paymentMethod: Int?,
         deviceId: String,
         deviceKey: String,
+        promoCode: String? = null,
     ): BackendPayment = postJson(
         path = "/payments/create",
-        payload = JSONObject().put("plan_code", planCode).put("payment_method", paymentMethod ?: JSONObject.NULL),
+        payload = JSONObject().put("plan_code", planCode).put("payment_method", paymentMethod ?: JSONObject.NULL).put("promo_code", promoCode ?: JSONObject.NULL),
         token = token,
         currentDeviceId = deviceId,
         currentDeviceKey = deviceKey,
     ).toBackendPayment()
+
+    suspend fun promo(token: String, code: String, planCode: String?, redeem: Boolean, deviceId: String, deviceKey: String): BackendPromo {
+        val json = postJson(path = if (redeem) "/promocodes/redeem" else "/promocodes/quote",
+            payload = JSONObject().put("code", code).put("plan_code", planCode ?: JSONObject.NULL),
+            token = token, currentDeviceId = deviceId, currentDeviceKey = deviceKey)
+        return BackendPromo(json.getString("kind"), json.getInt("value"), json.optBackendString("code"),
+            if (json.isNull("amount_rub")) null else json.getInt("amount_rub"))
+    }
 
     suspend fun payments(token: String, deviceId: String, deviceKey: String): List<BackendPayment> = withContext(Dispatchers.IO) {
         val response = executeArray(

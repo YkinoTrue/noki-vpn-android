@@ -12,6 +12,8 @@ internal fun JSONObject.toBackendPayment(): BackendPayment = BackendPayment(
     status = getString("status"),
     amountRub = getInt("amount_rub"),
     paymentUrl = optBackendString("payment_url"),
+    createdAt = optBackendString("created_at"),
+    description = optBackendString("description"),
 )
 
 internal fun JSONObject.toBackendSubscription(): BackendSubscription =

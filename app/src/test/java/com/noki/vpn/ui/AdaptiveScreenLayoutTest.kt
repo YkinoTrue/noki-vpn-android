@@ -419,7 +419,7 @@ class AdaptiveScreenLayoutTest {
                     com.noki.vpn.data.BackendPaymentMethod(13, "crypto", "Криптовалюта", true))), methodCode = "card")) }
             PlanCheckoutScreen(plan, "Free", false, com.noki.vpn.data.BillingCycle.YEARLY, AppLanguage.RU, {}, null, false,
                 470f / 370f, Modifier.padding(horizontal = 21.dp).width(470.dp).verticalScroll(rememberScrollState()).padding(top = 20.dp, bottom = 24.dp),
-                payment, { payment = payment.copy(methodCode = it) }, {}, {}, {}, {})
+                payment, {}, {}, { payment = payment.copy(methodCode = it) }, {}, {}, {}, {})
         }.use {
             val heading = compose.onNodeWithText("Текущий тариф").fetchSemanticsNode().boundsInRoot
             assertTrue("Plan transition must be at the top", heading.top < 320f)
@@ -519,6 +519,7 @@ class AdaptiveScreenLayoutTest {
             sharedBackdrop = null, liveGlassEnabled = false,
             onPersonalizationClicked = {}, onPlansClicked = {}, onDevicesClicked = {}, onSupportClicked = {},
             onSecurityClicked = {}, onNotificationsClicked = {}, onNotificationDeleted = {},
+            onPaymentHistoryClicked = {}, onApplyPromoCode = {}, onClearPromoCode = {},
             onDeleteAccountClicked = {}, onAccessDenied = {}, onDismissDialog = {}, onConfirmDialog = {},
         )
     }.use {

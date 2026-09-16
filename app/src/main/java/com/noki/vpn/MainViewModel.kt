@@ -45,6 +45,9 @@ class MainViewModel(
     fun refreshAndroidUpdateStatus() = runtime.refreshAndroidUpdateStatus()
 
     fun preparePaymentCheckout() = runtime.paymentCheckoutWorkflow.prepare()
+    fun loadPaymentHistory() = runtime.paymentCheckoutWorkflow.loadHistory()
+    fun applyPromoCode(code: String, planCode: String? = null) = runtime.paymentCheckoutWorkflow.submitPromo(code, planCode)
+    fun clearPromoCode() = runtime.paymentCheckoutWorkflow.clearPromo()
     fun selectPaymentMethod(code: String) = runtime.paymentCheckoutWorkflow.selectMethod(code)
     fun createPayment(planCode: String) = runtime.paymentCheckoutWorkflow.submit(planCode)
     fun refreshPaymentStatus() = runtime.paymentCheckoutWorkflow.refreshStatus()

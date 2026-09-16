@@ -13,6 +13,7 @@ class AuthRefreshRejectedException(
 ) : IllegalStateException("auth_refresh_rejected", rejection)
 
 data class BackendPaymentMethod(val id: Int?, val code: String, val label: String, val enabled: Boolean)
+data class BackendPromo(val kind: String, val value: Int, val code: String?, val amountRub: Int?)
 
 data class BackendPaymentConfig(
     val configured: Boolean,
@@ -26,6 +27,8 @@ data class BackendPayment(
     val status: String,
     val amountRub: Int,
     val paymentUrl: String?,
+    val createdAt: String? = null,
+    val description: String? = null,
 )
 
 data class BackendUser(

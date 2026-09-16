@@ -20,12 +20,32 @@ class PaymentCheckoutWorkflowTest {
         var paid = 0
         var calls = 0
         var requested: Pair<String, Int?>? = null
+        var requestedPromo: String? = null
+        var promoResponse: suspend () -> BackendPromo = { BackendPromo("discount", 20, "PROMO", 4080) }
         var response: suspend () -> BackendPayment = { pending }
         var status: suspend () -> List<BackendPayment> = { listOf(pending) }
         val workflow = PaymentCheckoutWorkflow(scope, { state }, { state = it },
             { AuthSessionAttempt("access", 0) }, { true }, { config },
-            { _, code, method -> calls++; requested = code to method; response() },
-            { status() }, { savedId }, { savedId = it }, { paid++ }, pollDelayMillis = 1)
+            { _, code, method, promo -> calls++; requested = code to method; requestedPromo = promo; response() },
+            { status() }, { savedId }, { savedId = it }, { paid++ }, { _, _, _, _ -> promoResponse() }, pollDelayMillis = 1)
+    }
+
+    @Test fun `history discards old account responses and promo is passed only for its plan`() = runBlocking {
+        val f = Fixture(this)
+        f.workflow.loadHistory(); yield()
+        assertEquals(listOf(pending), f.state.paymentCheckout.history)
+        f.workflow.prepare(); yield()
+        f.workflow.submitPromo("PROMO", plan.code); yield()
+        f.workflow.submit(plan.code); yield()
+        assertEquals("PROMO", f.requestedPromo)
+        f.workflow.clearPromo()
+        f.workflow.submit(plan.code); yield()
+        assertNull(f.requestedPromo)
+        val gate = CompletableDeferred<List<BackendPayment>>()
+        f.status = { withContext(NonCancellable) { gate.await() } }
+        f.workflow.loadHistory(); yield(); f.workflow.invalidate()
+        gate.complete(listOf(pending)); yield(); yield()
+        assertTrue(f.state.paymentCheckout.history.isEmpty())
     }
 
     @Test fun `double tap creates one invoice with exact yearly code and selected server method`() = runBlocking {

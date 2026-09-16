@@ -203,11 +203,11 @@ internal class AppUiRuntime(
         currentAuthAttempt = { authSessionCoordinator.attempt() },
         isCurrent = authSessionCoordinator::isCurrent,
         loadConfig = backendApi::paymentConfig,
-        create = { attempt, planCode, method ->
+        create = { attempt, planCode, method, promoCode ->
             val deviceId = backendDeviceId
             val deviceKey = backendDeviceKey
             authSessionCoordinator.run(attempt) { token ->
-                backendApi.createPayment(token, planCode, method, deviceId, deviceKey)
+                backendApi.createPayment(token, planCode, method, deviceId, deviceKey, promoCode)
             }
         },
         loadPayments = { attempt ->
@@ -224,6 +224,11 @@ internal class AppUiRuntime(
             savedStateHandle["checkout.payment"] = id
         },
         onPaid = { refreshAllData(showNetworkFailureInline = false) },
+        applyPromo = { attempt, code, planCode, redeem ->
+            val deviceId = backendDeviceId
+            val deviceKey = backendDeviceKey
+            authSessionCoordinator.run(attempt) { token -> backendApi.promo(token, code, planCode, redeem, deviceId, deviceKey) }
+        },
     )
 
     init {

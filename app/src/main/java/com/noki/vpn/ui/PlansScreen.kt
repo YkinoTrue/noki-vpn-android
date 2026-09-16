@@ -176,6 +176,8 @@ fun PlansScreen(
                             scale = scale,
                             checkout = state.paymentCheckout,
                             onMethodChanged = viewModel::selectPaymentMethod,
+                            onApplyPromo = { viewModel.applyPromoCode(it, checkoutPlan.code) },
+                            onClearPromo = viewModel::clearPromoCode,
                             onPay = { viewModel.createPayment(checkoutPlan.code) },
                             onRetryConfig = viewModel::preparePaymentCheckout,
                             onCheckStatus = viewModel::refreshPaymentStatus,
