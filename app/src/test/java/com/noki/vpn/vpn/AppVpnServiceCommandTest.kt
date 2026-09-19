@@ -50,6 +50,33 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 class AppVpnServiceCommandTest {
     @Test
+    fun diagnosticQueuesAreClearedOnOptOutAndLogoutWithoutDeletingLocalLogs() = runBlocking {
+        val repository = SettingsRepository(Fixture(this).service)
+        for (logout in listOf(false, true)) {
+            val settings = repository.updateSettings {
+                it.copy(isAuthenticated = true, backendAccessToken = "token",
+                    advancedSettings = it.advancedSettings.copy(connectionLogsEnabled = true, anonymousLogsEnabled = true))
+            }
+            repository.recordAppLog("test", message = "local-only")
+            repository.enqueueVpnIncident(com.noki.vpn.data.VpnIncidentReport(
+                id = "incident", reason = "timeout", countryCode = "lv", locationCode = "lv1",
+                recoveryAttempts = 1, outcome = "failed", occurredAt = "2026-09-19T00:00:00Z",
+            ), settings)
+            repository.saveEndpointHealthEventQueue(listOf(com.noki.vpn.data.EndpointHealthEvent(
+                "endpoint", EndpointRankingPolicy.NetworkKind.WIFI,
+                com.noki.vpn.data.EndpointHealthEventType.CONNECT_FAIL, false, false,
+                com.noki.vpn.data.EndpointScoreBucket.BAD,
+            )))
+            if (logout) repository.clearAuthAndStageRefreshToken() else repository.updateSettings {
+                it.copy(advancedSettings = it.advancedSettings.copy(anonymousLogsEnabled = false))
+            }
+            assertEquals(emptyList<com.noki.vpn.data.EndpointHealthEvent>(), repository.loadEndpointHealthEventQueue())
+            assertEquals(emptyList<com.noki.vpn.data.VpnIncidentReport>(), repository.loadPendingVpnIncidents())
+            org.junit.Assert.assertTrue(repository.exportAppLogs().contains("local-only"))
+        }
+    }
+
+    @Test
     fun killSwitchRetainsTunnelAcrossFailuresAndRestartUntilExplicitStop() = runBlocking {
         val fixture = Fixture(this)
         fixture.enableKillSwitch()
@@ -144,6 +171,9 @@ class AppVpnServiceCommandTest {
             assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
             assertNull("failed VPN must release ordinary internet", fixture.orchestrator.currentTunnel())
             assertEquals(attempt + 1, fixture.recoveryAttempt())
+            fixture.invoke("broadcastCurrentState")
+            assertFalse("QUERY_STATE must preserve the retry", shadowOf(fixture.service).isStoppedBySelf)
+            assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
         }
         fixture.stop(1)
         fixture.orchestrator.activeTransitionJob()!!.join()
@@ -186,6 +216,45 @@ class AppVpnServiceCommandTest {
         assertEquals("hy2", fixture.orchestrator.currentSettings()?.profile?.endpointCode)
         assertEquals("hy2", fixture.savedSettings().profile.endpointCode)
         assertEquals(1, fixture.tunnelsCreated)
+    }
+
+    @Test
+    fun failedReplacementThenBackendTimeoutReportsFailureAndKeepsRetry() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = "tcp1")
+        fixture.startPrepared()
+        fixture.workingEndpoint = null
+        assertFalse(fixture.replaceConnected())
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        fixture.useOfflinePreparation()
+        fixture.prepareFailure(java.io.IOException("backend timeout"), destructive = false)
+        fixture.invoke("broadcastCurrentState")
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        assertFalse(shadowOf(fixture.service).isStoppedBySelf)
+        assertEquals(1, fixture.recoveryAttempt())
+        assertNull(fixture.orchestrator.currentTunnel())
+        shadowOf(Looper.getMainLooper()).idleFor(
+            java.time.Duration.ofMillis(ConnectedWatchdogPolicy.transientRetryDelayMillis(0)),
+        )
+        fixture.orchestrator.activeTransitionJob()!!.join()
+        assertEquals(2, fixture.recoveryAttempt())
+        fixture.stop(1)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+    }
+
+    @Test
+    fun failedReplacementRetainsTunnelForNextHealthyCandidate() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = "tcp1")
+        fixture.startPrepared()
+        val tunnel = fixture.orchestrator.currentTunnel()
+        fixture.workingEndpoint = null
+        assertFalse(fixture.replaceConnected())
+        assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+        fixture.workingEndpoint = "tcp1"
+        org.junit.Assert.assertTrue(fixture.replaceConnected())
+        assertEquals(VpnConnectionState.CONNECTED, fixture.orchestrator.currentState())
+        assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+        fixture.stop(1)
+        fixture.orchestrator.activeTransitionJob()!!.join()
     }
 
     @Test
@@ -333,7 +402,7 @@ class AppVpnServiceCommandTest {
     private class Fixture(
         scope: CoroutineScope,
         private val probeFallback: Boolean = false,
-        private val workingEndpoint: String? = "hy2",
+        var workingEndpoint: String? = "hy2",
     ) {
         val service = Robolectric.buildService(AppVpnService::class.java).get()
         val startedEndpoints = mutableListOf<String>()
@@ -454,6 +523,16 @@ class AppVpnServiceCommandTest {
             .apply { isAccessible = true }.getInt(service)
 
         fun savedSettings(): StoredSettings = store.load()
+
+        suspend fun replaceConnected(): Boolean = suspendCoroutineUninterceptedOrReturn { continuation ->
+            val settings = checkNotNull(orchestrator.currentSettings())
+            AppVpnService::class.java.declaredMethods.single { it.name == "replaceXrayOnExistingTunnel" }
+                .apply { isAccessible = true }.invoke(
+                    service, SettingsRepository(service), settings, settings, settings,
+                    EndpointRankingPolicy.NetworkKind.CELLULAR, orchestrator.currentTunnel(),
+                    orchestrator.beginTransition(), null, false, false, continuation,
+                )
+        }
 
         suspend fun startPrepared(mode: EndpointSelectionMode = EndpointSelectionMode.AUTO) {
             val candidates = (1..4).map { tcpCandidate("tcp$it") } + hysteriaCandidate("hy2")

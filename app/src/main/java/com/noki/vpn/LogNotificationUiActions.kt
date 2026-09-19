@@ -160,6 +160,9 @@ internal fun AppUiRuntime.maybeUploadLogsAutomatically() {
                 return@launch
             }
             val logsText = withContext(Dispatchers.IO) { appLogUploadCoordinator.captureLogs() }
+            if (!authSessionCoordinator.isCurrent(attempt) ||
+                !AppDiagnosticLogPolicy.shouldUploadAutomatically(repository.load().advancedSettings)
+            ) return@launch
             appLogUploadCoordinator.uploadAutomatic(
                 context = appLogUploadContext(attempt.accessToken),
                 logsText = logsText,

@@ -53,7 +53,6 @@ internal class VpnConnectionOrchestrator(
     @Volatile private var activeActivationKind: ConnectedActivationKind? = null
     private val lifecycleGeneration = VpnLifecycleGeneration()
     internal val lifecycleMutex = Mutex()
-    private val lifecycleLockOwner = Any()
     private val transitionLaunchLock = Any()
     private var transitionJob: Job? = null
     private var transitionOperation: VpnConnectionOperation? = null
@@ -185,7 +184,7 @@ internal class VpnConnectionOrchestrator(
     @Synchronized
     fun invalidate(): Long = lifecycleGeneration.invalidate()
 
-    fun activateConnected(
+    suspend fun activateConnected(
         generationId: Long,
         coreId: Long,
         tunnel: TunHandle,
@@ -193,7 +192,7 @@ internal class VpnConnectionOrchestrator(
         underlay: UnderlyingNetworkSnapshot?,
         kind: ConnectedActivationKind = ConnectedActivationKind.NEW_TUN,
     ): RuntimeOwner? {
-        check(lifecycleMutex.holdsLock(lifecycleLockOwner))
+        check(lifecycleMutex.holdsLock(checkNotNull(kotlinx.coroutines.currentCoroutineContext()[Job])))
         if (!lifecycleGeneration.isCurrent(generationId)) return null
         val previousOwner = activeOwner
         if (previousOwner != null) sidecars.stop(previousOwner)
@@ -208,7 +207,7 @@ internal class VpnConnectionOrchestrator(
     }
 
     suspend fun <T> withLifecycleLock(block: suspend () -> T): T =
-        lifecycleMutex.withLock(lifecycleLockOwner) { block() }
+        lifecycleMutex.withLock(checkNotNull(kotlinx.coroutines.currentCoroutineContext()[Job])) { block() }
 
     suspend fun releaseOwnedResources(finalState: VpnConnectionState) {
         lifecycleGeneration.invalidate()

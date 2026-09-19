@@ -24,6 +24,30 @@ import org.junit.Test
 
 class VpnConnectionOrchestratorTest {
     @Test
+    fun `independent lifecycle operations wait and cancellation preserves the holder`() = runBlocking {
+        val store = InMemorySettingsStore()
+        val orchestrator = VpnConnectionOrchestrator(
+            RecordingXrayRuntime(mutableListOf()), UnusedTunInterfaceFactory,
+            unusedPreparer(store), VpnSettingsCommitCoordinator(store),
+            RecordingConnectedSidecars(mutableListOf()),
+        )
+        val release = CompletableDeferred<Unit>()
+        val holder = async { orchestrator.withLifecycleLock { release.await() } }
+        yield()
+        val cancelled = async { orchestrator.withLifecycleLock { error("cancelled waiter entered") } }
+        val waiter = async { orchestrator.withLifecycleLock { 42 } }
+        yield()
+        assertFalse(waiter.isCompleted)
+        cancelled.cancel()
+        cancelled.join()
+        assertEquals(true, orchestrator.lifecycleMutex.isLocked)
+        release.complete(Unit)
+        holder.await()
+        assertEquals(42, waiter.await())
+        assertFalse(orchestrator.lifecycleMutex.isLocked)
+    }
+
+    @Test
     fun `invalidated lifecycle cannot deliver an owned completion`() = runBlocking {
         val store = InMemorySettingsStore()
         val orchestrator = VpnConnectionOrchestrator(

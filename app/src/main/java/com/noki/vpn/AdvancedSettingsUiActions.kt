@@ -4,7 +4,6 @@ import android.content.Context
 import com.noki.vpn.data.AdvancedSettings
 import com.noki.vpn.data.AppFilterMode
 import com.noki.vpn.data.AppDiagnosticLogPolicy
-import com.noki.vpn.data.EndpointHealthEvents
 import com.noki.vpn.data.EndpointGroupPolicy
 import com.noki.vpn.data.VpnConnectionState
 import com.noki.vpn.data.VpnEndpointOption
@@ -280,9 +279,6 @@ internal fun AppUiRuntime.persistAndApplyDomainRules(newState: AppUiState) {
 internal fun AppUiRuntime.applyLoggingPrivacyState(settings: AdvancedSettings) {
     if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(settings)) {
         cancelAutomaticLogUpload()
-    }
-    if (!EndpointHealthEvents.generalLoggingEnabled(settings)) {
-        repository.saveEndpointHealthEventQueue(emptyList())
     }
     if (!AppDiagnosticLogPolicy.shouldStoreAppLog(settings)) {
         repository.clearAppLogs()

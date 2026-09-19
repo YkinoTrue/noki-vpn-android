@@ -56,9 +56,6 @@ object EndpointHealthEvents {
     const val MAX_QUEUE_SIZE = 500
     const val HEARTBEAT_INTERVAL_MS = 60L * 60L * 1_000L
 
-    fun generalLoggingEnabled(settings: AdvancedSettings): Boolean =
-        settings.connectionLogsEnabled || settings.errorLogsEnabled
-
     fun scoreBucket(health: EndpointHealth?): EndpointScoreBucket =
         scoreBucket(health?.score ?: 70)
 
@@ -152,6 +149,7 @@ class EndpointHealthEventReporter(
     private val store: EndpointHealthEventStore,
     private val upload: suspend (token: String, events: List<EndpointHealthEvent>) -> Unit,
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
+    private val loadSettings: (() -> StoredSettings)? = null,
 ) {
     constructor(
         repository: SettingsRepository,
@@ -159,37 +157,52 @@ class EndpointHealthEventReporter(
     ) : this(
         store = repository,
         upload = { token, events -> backendApi.uploadEndpointHealthEvents(token, events) },
+        loadSettings = repository::load,
     )
 
     suspend fun recordEvent(
         settings: StoredSettings,
         event: EndpointHealthEvent,
     ) {
-        if (!EndpointHealthEvents.generalLoggingEnabled(settings.advancedSettings)) {
-            store.saveEndpointHealthEventQueue(emptyList())
+        val current = currentSettings(settings) ?: return
+        if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)) {
+            flush(settings)
             return
         }
         val normalized = EndpointHealthEvents.normalized(event) ?: return
         store.updateEndpointHealthEventQueue { queue ->
-            (queue + normalized).takeLast(EndpointHealthEvents.MAX_QUEUE_SIZE)
+            val latest = currentSettings(settings)
+            if (latest != null && AppDiagnosticLogPolicy.shouldUploadAutomatically(latest.advancedSettings)) {
+                (queue + normalized).takeLast(EndpointHealthEvents.MAX_QUEUE_SIZE)
+            } else queue
         }
         flush(settings)
     }
 
     suspend fun flush(settings: StoredSettings) {
         endpointHealthFlushMutex.withLock {
-            if (!EndpointHealthEvents.generalLoggingEnabled(settings.advancedSettings)) {
-                store.saveEndpointHealthEventQueue(emptyList())
+            val current = currentSettings(settings) ?: return@withLock
+            if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)) {
+                store.updateEndpointHealthEventQueue { queue ->
+                    val latest = currentSettings(settings)
+                    if (latest != null && !AppDiagnosticLogPolicy.shouldUploadAutomatically(latest.advancedSettings)) {
+                        emptyList()
+                    } else queue
+                }
                 return@withLock
             }
-            val token = settings.backendAccessToken?.takeIf { it.isNotBlank() } ?: return@withLock
+            val token = current.backendAccessToken?.takeIf { it.isNotBlank() } ?: return@withLock
             val queue = store.loadEndpointHealthEventQueue()
             if (queue.isEmpty()) return@withLock
             val batch = queue.take(EndpointHealthEvents.MAX_BATCH_SIZE)
+            val latest = currentSettings(settings) ?: return@withLock
+            if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(latest.advancedSettings)) return@withLock
             try {
                 upload(token, batch)
                 store.updateEndpointHealthEventQueue { current ->
-                    if (current.take(batch.size) == batch) current.drop(batch.size) else current
+                    if (currentSettings(settings) != null && current.take(batch.size) == batch) {
+                        current.drop(batch.size)
+                    } else current
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -203,8 +216,9 @@ class EndpointHealthEventReporter(
         networkKind: EndpointRankingPolicy.NetworkKind,
         health: EndpointHealth?,
     ) {
-        if (!EndpointHealthEvents.generalLoggingEnabled(settings.advancedSettings)) {
-            store.saveEndpointHealthEventQueue(emptyList())
+        val current = currentSettings(settings) ?: return
+        if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)) {
+            flush(settings)
             return
         }
         val now = nowMillis()
@@ -223,4 +237,7 @@ class EndpointHealthEventReporter(
             ),
         )
     }
+
+    private fun currentSettings(expected: StoredSettings): StoredSettings? =
+        (loadSettings?.invoke() ?: expected).takeIf { it.hasSameAuthSessionAs(expected) }
 }

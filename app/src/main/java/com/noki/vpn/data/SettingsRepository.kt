@@ -231,15 +231,18 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         }
     }
 
-    fun enqueueVpnIncident(incident: VpnIncidentReport) = synchronized(LOGS_LOCK) {
-        saveVpnIncidentsLocked(loadVpnIncidentsLocked().filterNot { it.id == incident.id } + incident)
+    fun enqueueVpnIncident(incident: VpnIncidentReport, expected: StoredSettings = load()) = synchronized(SETTINGS_LOCK) {
+        val current = loadSettingsLocked()
+        if (current.hasSameAuthSessionAs(expected) &&
+            AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)
+        ) saveVpnIncidentsLocked(loadVpnIncidentsLocked().filterNot { it.id == incident.id } + incident)
     }
 
-    fun loadPendingVpnIncidents(): List<VpnIncidentReport> = synchronized(LOGS_LOCK) {
+    fun loadPendingVpnIncidents(): List<VpnIncidentReport> = synchronized(SETTINGS_LOCK) {
         loadVpnIncidentsLocked()
     }
 
-    fun removePendingVpnIncident(incidentId: String) = synchronized(LOGS_LOCK) {
+    fun removePendingVpnIncident(incidentId: String) = synchronized(SETTINGS_LOCK) {
         saveVpnIncidentsLocked(loadVpnIncidentsLocked().filterNot { it.id == incidentId })
     }
 
@@ -510,13 +513,13 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         markersStore.saveLastRegisteredFcmTokenHash(tokenHash, deviceId)
 
     override fun loadEndpointHealthEventQueue(): List<EndpointHealthEvent> {
-        return synchronized(ENDPOINT_HEALTH_EVENT_LOCK) {
+        return synchronized(SETTINGS_LOCK) {
             loadEndpointHealthEventQueueLocked()
         }
     }
 
     override fun saveEndpointHealthEventQueue(events: List<EndpointHealthEvent>) {
-        synchronized(ENDPOINT_HEALTH_EVENT_LOCK) {
+        synchronized(SETTINGS_LOCK) {
             saveEndpointHealthEventQueueLocked(events)
         }
     }
@@ -524,7 +527,7 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
     override fun updateEndpointHealthEventQueue(
         transform: (List<EndpointHealthEvent>) -> List<EndpointHealthEvent>,
     ) {
-        synchronized(ENDPOINT_HEALTH_EVENT_LOCK) {
+        synchronized(SETTINGS_LOCK) {
             saveEndpointHealthEventQueueLocked(transform(loadEndpointHealthEventQueueLocked()))
         }
     }
@@ -618,7 +621,8 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         transform: (StoredSettings) -> AuthSettingsTransition,
     ): AuthSettingsTransition = synchronized(PENDING_LOGOUT_REVOCATION_LOCK) {
         synchronized(SETTINGS_LOCK) {
-            val transition = transform(loadSettingsLocked())
+            val previous = loadSettingsLocked()
+            val transition = transform(previous)
             val refreshToken = transition.refreshTokenToRevoke
                 ?.trim()
                 ?.takeIf(String::isNotBlank)
@@ -637,6 +641,9 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
                     cipher.encrypt(PendingLogoutRevocationCodec.encode(pending)),
                 )
             }
+            if (!transition.refreshCommitted && !previous.hasSameAuthSessionAs(transition.settings)) {
+                clearAutomaticTelemetry(editor)
+            }
             check(editor.commit()) { "auth_settings_transition_persist_failed" }
             transition
         }
@@ -646,10 +653,20 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         settingsCodec.decode(loadSettingsJson())
 
     private fun saveSettingsLocked(settings: StoredSettings) {
+        val previous = loadSettingsLocked()
         preferences.edit {
+            if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(settings.advancedSettings) ||
+                !previous.hasSameAuthSessionAs(settings)
+            ) clearAutomaticTelemetry(this)
             putString(KEY_ENCRYPTED_SETTINGS, cipher.encrypt(settingsCodec.encode(settings)))
             remove(KEY_SETTINGS)
         }
+    }
+
+    private fun clearAutomaticTelemetry(editor: android.content.SharedPreferences.Editor) {
+        editor.remove(KEY_ENDPOINT_HEALTH_EVENTS_ENCRYPTED)
+            .remove(KEY_ENDPOINT_HEALTH_LAST_HEARTBEAT_AT)
+            .remove(KEY_VPN_INCIDENTS_ENCRYPTED)
     }
 
     fun loadInstalledApps(): List<AppInfo> {
@@ -861,7 +878,6 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         val STATS_LOCK = Any()
         val LOGS_LOCK = Any()
         val ENDPOINT_HEALTH_LOCK = Any()
-        val ENDPOINT_HEALTH_EVENT_LOCK = Any()
         val ENDPOINT_ROTATION_LOCK = Any()
         val TEMPORARY_VPN_LEASE_LOCK = Any()
         val PENDING_LOGOUT_REVOCATION_LOCK = Any()

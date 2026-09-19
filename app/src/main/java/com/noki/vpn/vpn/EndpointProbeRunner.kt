@@ -85,13 +85,7 @@ class EndpointProbeRunner(
                             networkKind = networkKind,
                         )
                         endpointHealthReporter.recordEvent(
-                            settings = repository.load().let { current ->
-                                if (current.backendAccessToken.isNullOrBlank() && !settings.backendAccessToken.isNullOrBlank()) {
-                                    current.copy(backendAccessToken = settings.backendAccessToken)
-                                } else {
-                                    current
-                                }
-                            },
+                            settings = settings,
                             event = EndpointHealthEvent(
                                 endpointCode = outcome.endpointCode,
                                 networkKind = networkKind,

@@ -32,6 +32,7 @@ import com.noki.vpn.data.EndpointRankingPolicy
 import com.noki.vpn.data.EndpointSelector
 import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.PendingLogoutRevocationWorker
+import com.noki.vpn.data.hasSameAuthSessionAs
 import com.noki.vpn.data.SettingsRepository
 import com.noki.vpn.data.StoredSettings
 import com.noki.vpn.data.TemporaryVpnLease
@@ -104,7 +105,7 @@ class AppVpnService : VpnService() {
     private val runtimeDomainReapplyOwner = Any()
     private val temporaryLeaseExpiryOwner = Any()
     private val transientRecoveryOwner = Any()
-    private var transientRecoveryAttempt = 0
+    @Volatile private var transientRecoveryAttempt = 0
     private val lockdownRecoveryTask = {
         if (currentState == VpnConnectionState.FAILED && tunnel != null) {
             reconnectFailedClosedVpn(allowCachedFallback = true)
@@ -707,6 +708,10 @@ class AppVpnService : VpnService() {
             broadcastState(VpnConnectionState.CONNECTED)
             updateActiveNotification()
         } else if (currentState == VpnConnectionState.FAILED && tunnel != null) {
+            if (error != null && BackendRetryPolicy.isTransient(error)) {
+                failClosedAfterReplacementFailure(repository, activeSettings ?: repository.load(), reason)
+                return
+            }
             if (ConnectedWatchdogPolicy.retryFailureDecision(
                     isLockdown = isActiveLockdownRecovery(),
                     stage = ConnectedWatchdogPolicy.RetryFailureStage.PermanentPrepare,
@@ -1192,7 +1197,9 @@ class AppVpnService : VpnService() {
                 )
                 if (prepared == null) {
                     if (prepareFailure?.let(BackendRetryPolicy::isTransient) == true) {
-                        scheduleTransientRecovery(repository, previousSettings, incidentId)
+                        if (currentState == VpnConnectionState.CONNECTED) {
+                            scheduleTransientRecovery(repository, previousSettings, incidentId)
+                        }
                         return@launchConnectionTransition
                     }
                     continue
@@ -1295,9 +1302,7 @@ class AppVpnService : VpnService() {
         settings: StoredSettings,
         incident: VpnIncidentReport,
     ) {
-        if (settings.advancedSettings.anonymousLogsEnabled) {
-            repository.enqueueVpnIncident(incident)
-        }
+        repository.enqueueVpnIncident(incident, settings)
     }
 
     private suspend fun uploadPendingVpnIncidents(
@@ -1311,6 +1316,10 @@ class AppVpnService : VpnService() {
             shouldUploadAutomatically = { false },
             markAutomaticallyUploaded = {},
             upload = { request ->
+                val current = repository.load()
+                if (!current.hasSameAuthSessionAs(settings) ||
+                    !AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)
+                ) throw CancellationException("Diagnostic upload no longer permitted")
                 backendApi.uploadAppLogs(
                     token = request.token,
                     deviceId = request.deviceId,
@@ -1397,7 +1406,8 @@ class AppVpnService : VpnService() {
     ): Boolean = connectionOrchestrator.withLifecycleLock {
         if (!connectionOrchestrator.isCurrent(generationId) ||
             tunnel !== activeTunnel ||
-            currentState != VpnConnectionState.CONNECTED
+            (currentState != VpnConnectionState.CONNECTED &&
+                (rollbackOnFailure || currentState != VpnConnectionState.FAILED))
         ) {
             return@withLifecycleLock false
         }
@@ -1423,6 +1433,15 @@ class AppVpnService : VpnService() {
             settings.advancedSettings,
         )
 
+        broadcastState(VpnConnectionState.FAILED, "runtime_replacement_in_progress")
+        startForeground(
+            NOTIFICATION_ID,
+            createNotification(
+                title = "VPN переподключается",
+                text = "Проверяем новое подключение. Трафик через VPN временно заблокирован.",
+                showActions = true,
+            ),
+        )
         connectionOrchestrator.stopXray()
         val nextStarted = connectionOrchestrator.startXray(nextConfig)
         val nextReadiness = if (nextStarted) measureRuntimeReadiness(recovery = true) else null
@@ -1480,6 +1499,7 @@ class AppVpnService : VpnService() {
         )
 
         if (!rollbackOnFailure) {
+            connectionOrchestrator.stopXray()
             warmupController.clear()
             activeEndpointNetworkKind = previousNetworkKind
             notificationServerLabel = VpnServiceLogContext.serverLabel(previousSettings)
@@ -1708,20 +1728,8 @@ class AppVpnService : VpnService() {
         slow: Boolean,
         health: EndpointHealth?,
     ) {
-        val latestSettings = repository.load().let { current ->
-            if (current.backendAccessToken.isNullOrBlank() && !settings.backendAccessToken.isNullOrBlank()) {
-                current.copy(
-                    backendAccessToken = settings.backendAccessToken,
-                    backendRefreshToken = settings.backendRefreshToken,
-                    backendAccessTokenExpiresInSeconds = settings.backendAccessTokenExpiresInSeconds,
-                    backendRefreshExpiresAt = settings.backendRefreshExpiresAt,
-                )
-            } else {
-                current
-            }
-        }
         EndpointHealthEventReporter(repository).recordEvent(
-            settings = latestSettings,
+            settings = settings,
             event = EndpointHealthEvent(
                 endpointCode = endpointCode,
                 networkKind = networkKind,
@@ -1744,12 +1752,11 @@ class AppVpnService : VpnService() {
                 return@launch
             }
             val repository = SettingsRepository(this@AppVpnService)
-            val latestSettings = repository.load()
             if (watchdogController.hasFreshXrayEvidence() &&
                 endpointHealthController.accepts(owner)
             ) {
                 EndpointHealthEventReporter(repository).recordHeartbeatIfDue(
-                    settings = latestSettings,
+                    settings = settings,
                     endpointCode = settings.profile.endpointCode,
                     networkKind = activeEndpointNetworkKind,
                     health = repository.loadEndpointHealth(activeEndpointNetworkKind)[settings.profile.endpointCode],
@@ -2636,7 +2643,10 @@ class AppVpnService : VpnService() {
     ): Notification = notificationFactory.create(title, text, showActions)
 
     private fun broadcastCurrentState() {
-        if (tunnel == null && currentState != VpnConnectionState.CONNECTING) {
+        if (tunnel == null && currentState == VpnConnectionState.DISCONNECTED &&
+            transientRecoveryAttempt == 0 &&
+            !connectionOrchestrator.transitionSnapshot().active && pendingStartOptions == null
+        ) {
             connectedAtMillis = null
             statsCoordinator.reset()
             SettingsRepository(this).clearVpnRuntimeState()

@@ -11,6 +11,51 @@ import org.junit.Test
 
 class EndpointHealthEventsConcurrencyTest {
     @Test
+    fun `waiting flush rechecks consent and auth session after acquiring mutex`() = runBlocking {
+        for (changeAccount in listOf(false, true)) {
+            val store = InMemoryEndpointHealthEventStore()
+            val original = settings("old-token")
+            var current = original
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            var uploads = 0
+            val reporter = EndpointHealthEventReporter(
+                store, upload = { _, _ -> uploads++; entered.complete(Unit); release.await() },
+                loadSettings = { current },
+            )
+            store.saveEndpointHealthEventQueue(listOf(event("old")))
+            val first = async { reporter.flush(original) }
+            entered.await()
+            val waiting = async { reporter.flush(original) }
+            yield()
+            current = if (changeAccount) settings("new-token") else original.copy(
+                advancedSettings = original.advancedSettings.copy(anonymousLogsEnabled = false),
+            )
+            store.saveEndpointHealthEventQueue(listOf(event("replacement")))
+            release.complete(Unit)
+            first.await()
+            waiting.await()
+            reporter.recordEvent(original, event("stale"))
+            assertEquals(1, uploads)
+            assertEquals(if (changeAccount) listOf(event("replacement")) else emptyList(), store.loadEndpointHealthEventQueue())
+        }
+    }
+
+    @Test
+    fun `local logging without automatic consent never uploads or queues telemetry`() = runBlocking {
+        val store = InMemoryEndpointHealthEventStore()
+        val enabled = settings("token")
+        val disabled = enabled.copy(advancedSettings = enabled.advancedSettings.copy(anonymousLogsEnabled = false))
+        val reporter = EndpointHealthEventReporter(store, upload = { _, _ -> error("upload without consent") })
+        store.saveEndpointHealthEventQueue(listOf(event("persisted")))
+        reporter.flush(disabled)
+        reporter.recordEvent(disabled, event("new"))
+        reporter.recordHeartbeatIfDue(disabled, "heartbeat", EndpointRankingPolicy.NetworkKind.WIFI, null)
+        assertEquals(emptyList<EndpointHealthEvent>(), store.loadEndpointHealthEventQueue())
+        assertTrue(AppDiagnosticLogPolicy.shouldStoreAppLog(disabled.advancedSettings))
+    }
+
+    @Test
     fun `automatic upload preference alone does not enable health logging`() {
         val automaticOnly = AdvancedSettings(
             connectionLogsEnabled = false,
@@ -18,9 +63,9 @@ class EndpointHealthEventsConcurrencyTest {
             anonymousLogsEnabled = true,
         )
 
-        assertFalse(EndpointHealthEvents.generalLoggingEnabled(automaticOnly))
+        assertFalse(AppDiagnosticLogPolicy.shouldUploadAutomatically(automaticOnly))
         assertTrue(
-            EndpointHealthEvents.generalLoggingEnabled(
+            AppDiagnosticLogPolicy.shouldUploadAutomatically(
                 automaticOnly.copy(connectionLogsEnabled = true),
             ),
         )
