@@ -24,6 +24,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performSemanticsAction
@@ -409,6 +411,7 @@ class AdaptiveScreenLayoutTest {
     }
 
     @Test fun checkoutPaymentMethodsAreExclusive() {
+        var appliedPromo = ""
         val plan = com.noki.vpn.data.PlanSummary("pro_yearly", "pro", "Pro", 6, 4000.0, "4 ТБ", 5100, 425,
             features = listOf("4 ТБ", "6 устройств", "Скорость до 200 Мбит/с", "Приватный DNS", "Блокировка рекламы"))
         render {
@@ -419,13 +422,20 @@ class AdaptiveScreenLayoutTest {
                     com.noki.vpn.data.BackendPaymentMethod(13, "crypto", "Криптовалюта", true))), methodCode = "card")) }
             PlanCheckoutScreen(plan, "Free", false, com.noki.vpn.data.BillingCycle.YEARLY, AppLanguage.RU, {}, null, false,
                 470f / 370f, Modifier.padding(horizontal = 21.dp).width(470.dp).verticalScroll(rememberScrollState()).padding(top = 20.dp, bottom = 24.dp),
-                payment, {}, {}, { payment = payment.copy(methodCode = it) }, {}, {}, {}, {})
+                payment, { appliedPromo = it }, {}, { payment = payment.copy(methodCode = it) }, {}, {}, {}, {})
         }.use {
             val heading = compose.onNodeWithText("Текущий тариф").fetchSemanticsNode().boundsInRoot
             assertTrue("Plan transition must be at the top", heading.top < 320f)
             saveImage("checkout-top-wide")
             compose.onNodeWithText("5100 ₽").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("-15%").assertIsDisplayed()
+            compose.onNode(hasSetTextAction()).performScrollTo().performTextInput("NOKI20")
+            val input = compose.onNode(hasSetTextAction()).fetchSemanticsNode().boundsInRoot
+            val apply = compose.onNodeWithText("Применить").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertEquals("Promo action stays inside the input row", input.center.y, apply.center.y, 4f)
+            compose.onNodeWithText("Применить").performClick()
+            compose.waitUntil(2000) { appliedPromo == "NOKI20" }
+            saveImage("checkout-promo-wide")
             compose.onNodeWithText("Карта").performScrollTo().assertIsSelected()
             compose.onNodeWithText("СБП").performScrollTo().performClick().assertIsSelected()
             compose.onNodeWithText("Карта").assertIsNotSelected()

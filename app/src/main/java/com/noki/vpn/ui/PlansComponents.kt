@@ -802,12 +802,22 @@ internal fun PlanCheckoutScreen(
                 )
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(SettingsStroke))
-            SettingsCompactInputField(value = promoCode, onValueChange = { promoCode = it; onClearPromo() },
-                placeholder = tr(language, "Промокод", "Promo code"), scale = scale,
-                enabled = !checkout.promoBusy && !checkout.isSubmitting, maxLength = 32)
-            androidx.compose.material3.TextButton(onClick = { onApplyPromo(promoCode) }, enabled = promoCode.isNotBlank() && !checkout.promoBusy && !checkout.isSubmitting) {
-                Text(tr(language, if (checkout.promoBusy) "Проверяем…" else "Применить", if (checkout.promoBusy) "Checking…" else "Apply"), color = SettingsTextPrimary)
-            }
+            AuthVerificationCodeField(
+                value = promoCode,
+                onValueChange = { promoCode = it.take(32); onClearPromo() },
+                placeholder = tr(language, "Промокод", "Promo code"),
+                buttonText = tr(language, "Применить", "Apply"),
+                showButton = true,
+                onButtonClick = { onApplyPromo(promoCode) },
+                modifier = Modifier.fillMaxWidth().height(settingsDp(56f, scale)),
+                inputEnabled = !checkout.promoBusy && !checkout.isSubmitting,
+                buttonEnabled = promoCode.isNotBlank() && !checkout.isSubmitting,
+                buttonLoading = checkout.promoBusy,
+                backdrop = backdrop,
+                liveGlassEnabled = liveGlassEnabled,
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+                buttonEndInset = 20f,
+            )
             (checkout.promoError ?: checkout.promoMessage)?.let { Text(it, color = if (checkout.promoError != null) SettingsError else SettingsTextPrimary) }
             SettingsText(
                 text = tr(language, "Способ оплаты", "Payment method"),

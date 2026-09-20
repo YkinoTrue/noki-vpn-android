@@ -44,6 +44,8 @@ internal fun AuthVerificationCodeField(
     buttonLoading: Boolean = false,
     backdrop: LayerBackdrop? = null,
     liveGlassEnabled: Boolean = false,
+    keyboardType: KeyboardType = KeyboardType.Number,
+    buttonEndInset: Float = 6f,
 ) {
     val metrics = nokiAdaptiveMetrics(LocalConfiguration.current.screenWidthDp.dp)
     val interactionSource = remember { MutableInteractionSource() }
@@ -67,9 +69,9 @@ internal fun AuthVerificationCodeField(
             enabled = inputEnabled,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = metrics.dp(19f), end = if (showButton) metrics.dp(130f) else metrics.dp(19f)),
+                .padding(start = metrics.dp(19f), end = if (showButton) metrics.dp(124f + buttonEndInset) else metrics.dp(19f)),
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             interactionSource = interactionSource,
             cursorBrush = SolidColor(NokiAccentStrong),
             textStyle = TextStyle(
@@ -108,7 +110,7 @@ internal fun AuthVerificationCodeField(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = metrics.dp(6f), end = metrics.dp(6f), bottom = metrics.dp(6f))
+                    .padding(top = metrics.dp(6f), end = metrics.dp(buttonEndInset), bottom = metrics.dp(6f))
                     .width(metrics.dp(105f))
                     .fillMaxHeight()
                     .nokiGlassSurface(
