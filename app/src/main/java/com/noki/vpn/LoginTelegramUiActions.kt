@@ -125,7 +125,7 @@ internal fun AppUiRuntime.handleTelegramLoginCallback(result: TelegramLoginCallb
         }
 
         is TelegramLoginCallbackResult.Failure -> {
-            handleTelegramLoginResult(TelegramLoginResult.Failure(result.code))
+            handleTelegramLoginResult(TelegramLoginResult.Failure(result.reason.code))
         }
 
         is TelegramLoginCallbackResult.AuthorizationCode -> {

@@ -70,7 +70,7 @@ class TelegramLoginGatewayTest {
         )
         assertTrue(gateway.finishNativeCallback(result as TelegramLoginCallbackResult.AuthorizationCode, success = true))
         assertEquals(
-            TelegramLoginCallbackResult.Failure("stale_login_callback"),
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback(code = "second-code", state = request.clientState, error = null),
         )
     }
@@ -79,10 +79,10 @@ class TelegramLoginGatewayTest {
     fun `missing state native callbacks cannot enter a browser or unlaunched flow`() {
         val gateway = TelegramLoginGateway(randomBytes = { ByteArray(32) { 7 } })
         val request = gateway.begin()
-        assertEquals(TelegramLoginCallbackResult.Failure("stale_login_callback"),
+        assertEquals(TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("code-before-launch", null, null))
         gateway.markExternalFlowStarted(request.clientState, browser = true)
-        assertEquals(TelegramLoginCallbackResult.Failure("stale_login_callback"),
+        assertEquals(TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("native-code", null, null))
         assertTrue(gateway.consumeBrowserCallback(request.clientState, null) is TelegramLoginCallbackResult.BrowserState)
     }
@@ -93,7 +93,7 @@ class TelegramLoginGatewayTest {
         val request = gateway.begin()
         gateway.markExternalFlowStarted(request.clientState)
         val stale = gateway.consumeCallback("stale-code", null, null) as TelegramLoginCallbackResult.AuthorizationCode
-        assertEquals(TelegramLoginCallbackResult.Failure("stale_login_callback"),
+        assertEquals(TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("stale-code", null, null))
         val real = gateway.consumeCallback("real-code", null, null) as TelegramLoginCallbackResult.AuthorizationCode
         assertTrue(gateway.finishNativeCallback(stale, success = false))
@@ -110,7 +110,7 @@ class TelegramLoginGatewayTest {
         gateway.markExternalFlowStarted(request.clientState)
         val first = gateway.consumeCallback("first-code", null, null) as TelegramLoginCallbackResult.AuthorizationCode
         gateway.consumeCallback("second-code", null, null)
-        assertEquals(TelegramLoginCallbackResult.Failure("stale_login_callback"),
+        assertEquals(TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("third-code", null, null))
         assertTrue(gateway.finishNativeCallback(first, success = false))
         assertTrue(gateway.consumeCallback("third-code", null, null) is TelegramLoginCallbackResult.AuthorizationCode)
@@ -158,7 +158,7 @@ class TelegramLoginGatewayTest {
             gateway.consumeCallback("", null, null),
             gateway.consumeCallback("x".repeat(2049), null, null),
         )) {
-            assertEquals(TelegramLoginCallbackResult.Failure("stale_login_callback"), candidate)
+            assertEquals(TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale), candidate)
         }
         assertTrue(gateway.consumeCallback("valid-code", null, null) is TelegramLoginCallbackResult.AuthorizationCode)
     }
@@ -190,7 +190,7 @@ class TelegramLoginGatewayTest {
         val second = gateway.begin()
         gateway.cancel()
         assertEquals(
-            TelegramLoginCallbackResult.Failure("stale_login_callback"),
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback(code = "authorization-code", state = second.clientState, error = null),
         )
     }
@@ -211,7 +211,7 @@ class TelegramLoginGatewayTest {
             result,
         )
         assertEquals(
-            TelegramLoginCallbackResult.Failure("stale_login_callback"),
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeBrowserCallback(state = request.clientState, error = null),
         )
     }
@@ -228,7 +228,7 @@ class TelegramLoginGatewayTest {
         assertFalse(gateway.cancel(stale.clientState))
         assertFalse(gateway.markExternalFlowStarted(stale.clientState))
         assertEquals(
-            TelegramLoginCallbackResult.Failure("stale_login_callback"),
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("stale-code", stale.clientState, null),
         )
         assertTrue(
@@ -244,7 +244,7 @@ class TelegramLoginGatewayTest {
 
         assertTrue(gateway.cancelPreparationIfPending())
         assertEquals(
-            TelegramLoginCallbackResult.Failure("stale_login_callback"),
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("late-code", preparing.clientState, null),
         )
 
@@ -265,7 +265,7 @@ class TelegramLoginGatewayTest {
         gateway.markHostStopped()
 
         assertEquals(
-            TelegramLoginCallbackResult.Failure("stale_login_callback"),
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             gateway.consumeCallback("foreign-code", "F".repeat(43), null),
         )
         val staleTimeoutLease = checkNotNull(gateway.resumeTimeoutLease())

@@ -14,6 +14,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
+enum class VpnPreparationStrategy(val forceRefreshSession: Boolean, val allowCachedFallback: Boolean) {
+    CachedFirst(false, true),
+    CachedFirstWithoutFallback(false, false),
+    FreshOnly(true, false),
+    FreshWithCachedFallback(true, true),
+}
+
 internal data class PreparedVpnSession(
     val preparationBaseline: StoredSettings,
     val candidateSettings: StoredSettings,
@@ -51,14 +58,13 @@ internal class VpnConnectionPreparer(
     }
 
     suspend fun prepare(
-        forceRefreshSession: Boolean,
-        allowCachedFallback: Boolean,
+        strategy: VpnPreparationStrategy,
         sessionSelection: VpnSessionSelection? = null,
         onRetry: (Int, Throwable) -> Unit = this.onRetry,
         onCachedFallback: (Throwable) -> Unit = this.onCachedFallback,
     ): Outcome {
         var localSettings = store.load()
-        if (!forceRefreshSession && RuntimeProfilePolicy.isCachedProfileUsable(localSettings)) {
+        if (!strategy.forceRefreshSession && RuntimeProfilePolicy.isCachedProfileUsable(localSettings)) {
             return Outcome.Success(
                 PreparedVpnSession(
                     preparationBaseline = localSettings,
@@ -78,7 +84,7 @@ internal class VpnConnectionPreparer(
         var decision = resolveWithRetries(
             token,
             localSettings,
-            allowCachedFallback,
+            strategy.allowCachedFallback,
             requestedSelection,
             onRetry,
             deadlineAtMillis,
@@ -103,7 +109,7 @@ internal class VpnConnectionPreparer(
                 decision = resolveWithRetries(
                     token,
                     localSettings,
-                    allowCachedFallback,
+                    strategy.allowCachedFallback,
                     requestedSelection,
                     onRetry,
                     deadlineAtMillis,

@@ -2,13 +2,20 @@ package com.noki.vpn.vpn
 
 import com.noki.vpn.data.AppFilterMode
 
-internal data class AppVpnRoutingRules(
-    val allowedPackages: Set<String> = emptySet(),
-    val disallowedPackages: Set<String> = emptySet(),
-    val removedPackages: Set<String> = emptySet(),
-    val canEstablishTunnel: Boolean = true,
-    val failureReason: String? = null,
-)
+internal sealed interface AppVpnRoutingRules {
+    val removedPackages: Set<String>
+
+    data class Ready(
+        val allowedPackages: Set<String> = emptySet(),
+        val disallowedPackages: Set<String> = emptySet(),
+        override val removedPackages: Set<String> = emptySet(),
+    ) : AppVpnRoutingRules
+
+    data class Rejected(
+        val failureReason: String,
+        override val removedPackages: Set<String>,
+    ) : AppVpnRoutingRules
+}
 
 internal object AppVpnRoutingPolicy {
     const val EMPTY_ONLY_SELECTED_REASON = "empty_selected_apps"
@@ -29,27 +36,26 @@ internal object AppVpnRoutingPolicy {
         val removed = normalized - selected
 
         return when (filterMode) {
-            AppFilterMode.ALL_APPS -> AppVpnRoutingRules(
+            AppFilterMode.ALL_APPS -> AppVpnRoutingRules.Ready(
                 disallowedPackages = setOf(appPackageName),
                 removedPackages = removed,
             )
 
             AppFilterMode.ONLY_SELECTED -> {
                 if (selected.isEmpty()) {
-                    AppVpnRoutingRules(
-                        canEstablishTunnel = false,
+                    AppVpnRoutingRules.Rejected(
                         failureReason = EMPTY_ONLY_SELECTED_REASON,
                         removedPackages = removed,
                     )
                 } else {
-                    AppVpnRoutingRules(
+                    AppVpnRoutingRules.Ready(
                         allowedPackages = selected,
                         removedPackages = removed,
                     )
                 }
             }
 
-            AppFilterMode.ALL_EXCEPT_SELECTED -> AppVpnRoutingRules(
+            AppFilterMode.ALL_EXCEPT_SELECTED -> AppVpnRoutingRules.Ready(
                 disallowedPackages = setOf(appPackageName) + selected,
                 removedPackages = removed,
             )

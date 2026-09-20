@@ -48,6 +48,7 @@ object ConnectedWatchdogPolicy {
     data class RecoveryTarget(
         val locationCode: String? = null,
         val excludeLocationCode: String? = null,
+        val attempts: Int = 1,
     )
 
     enum class PreparationFailureDecision {
@@ -73,39 +74,17 @@ object ConnectedWatchdogPolicy {
         else -> 300_000L
     }
 
-    data class TransientStartDecision(
-        val forceRefreshSession: Boolean,
-        val allowCachedFallback: Boolean,
-    )
-
-    fun transientStartDecision(attempt: Int): TransientStartDecision {
-        return if (attempt <= 0) {
-            TransientStartDecision(
-                forceRefreshSession = false,
-                allowCachedFallback = true,
-            )
-        } else {
-            TransientStartDecision(
-                forceRefreshSession = true,
-                allowCachedFallback = false,
-            )
-        }
-    }
+    fun transientStartDecision(attempt: Int): VpnPreparationStrategy =
+        if (attempt <= 0) VpnPreparationStrategy.CachedFirst else VpnPreparationStrategy.FreshOnly
 
     fun recoveryTargets(currentLocationCode: String): List<RecoveryTarget> = listOf(
-        RecoveryTarget(locationCode = currentLocationCode),
-        RecoveryTarget(locationCode = currentLocationCode),
+        RecoveryTarget(locationCode = currentLocationCode, attempts = 2),
         RecoveryTarget(excludeLocationCode = currentLocationCode),
     )
 
     enum class ExhaustedRecoveryDecision {
         ReleaseTunnel,
         ReportLockdownBlockedAndRetry,
-    }
-
-    enum class RetryFailureStage {
-        PermanentPrepare,
-        XrayOrReadiness,
     }
 
     enum class RetryFailureDecision {
@@ -115,10 +94,8 @@ object ConnectedWatchdogPolicy {
 
     fun retryFailureDecision(
         isLockdown: Boolean,
-        stage: RetryFailureStage,
     ): RetryFailureDecision = when {
         !isLockdown -> RetryFailureDecision.UseGeneralFailure
-        stage == RetryFailureStage.PermanentPrepare -> RetryFailureDecision.KeepTruthfulFailedAndReschedule
         else -> RetryFailureDecision.KeepTruthfulFailedAndReschedule
     }
 

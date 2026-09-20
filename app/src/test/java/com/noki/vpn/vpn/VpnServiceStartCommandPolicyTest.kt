@@ -1,34 +1,15 @@
 package com.noki.vpn.vpn
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VpnServiceStartCommandPolicyTest {
-    @Test
-    fun ownedDelayedCallbackCoalescesSchedulesAndCancelsByStableIdentity() {
-        val scheduled = mutableListOf<Runnable>()
-        val callback = OwnedDelayedCallback {}
-        val remove: (Runnable) -> Unit = { scheduled.remove(it) }
-        val post: (Runnable) -> Unit = { scheduled.add(it) }
-
-        callback.schedule(remove, post)
-        callback.schedule(remove, post)
-
-        assertEquals(1, scheduled.size)
-        assertSame(callback.runnable, scheduled.single())
-
-        callback.cancel(remove)
-        assertTrue(scheduled.isEmpty())
-    }
-
     @Test
     fun startDuringStopIsQueuedUntilCleanupCompletes() {
         assertEquals(
             VpnServiceStartCommandPolicy.ActiveStartDecision.QueueAfterCleanup,
             VpnServiceStartCommandPolicy.activeStartDecision(
-                VpnServiceStartCommandPolicy.ActiveOperation.Stop,
+                VpnConnectionOperation.STOP,
             ),
         )
     }
@@ -38,7 +19,7 @@ class VpnServiceStartCommandPolicyTest {
         assertEquals(
             VpnServiceStartCommandPolicy.ActiveStartDecision.CoalesceWithRestart,
             VpnServiceStartCommandPolicy.activeStartDecision(
-                VpnServiceStartCommandPolicy.ActiveOperation.Restart,
+                VpnConnectionOperation.RESTART,
             ),
         )
     }
@@ -51,8 +32,7 @@ class VpnServiceStartCommandPolicyTest {
             refreshSessionExtra = false,
         )
 
-        assertTrue(options.forceRefreshSession)
-        assertTrue(options.allowCachedFallback)
+        assertEquals(VpnPreparationStrategy.FreshWithCachedFallback, options.strategy)
         assertEquals(VpnRuntimeMode.ACCOUNT, options.runtimeMode)
     }
 
@@ -64,8 +44,7 @@ class VpnServiceStartCommandPolicyTest {
             refreshSessionExtra = false,
         )
 
-        assertTrue(options.forceRefreshSession)
-        assertTrue(options.allowCachedFallback)
+        assertEquals(VpnPreparationStrategy.FreshWithCachedFallback, options.strategy)
         assertEquals(VpnRuntimeMode.ACCOUNT, options.runtimeMode)
     }
 
@@ -77,8 +56,7 @@ class VpnServiceStartCommandPolicyTest {
             refreshSessionExtra = true,
         )
 
-        assertTrue(options.forceRefreshSession)
-        assertTrue(options.allowCachedFallback)
+        assertEquals(VpnPreparationStrategy.FreshWithCachedFallback, options.strategy)
         assertEquals(VpnRuntimeMode.ACCOUNT, options.runtimeMode)
     }
 
@@ -91,8 +69,7 @@ class VpnServiceStartCommandPolicyTest {
         )
 
         assertEquals(VpnRuntimeMode.AUTH_TEMP, options.runtimeMode)
-        assertTrue(options.forceRefreshSession)
-        assertTrue(!options.allowCachedFallback)
+        assertEquals(VpnPreparationStrategy.FreshOnly, options.strategy)
     }
 
     @Test

@@ -41,8 +41,6 @@ internal data class VpnConnectionSnapshot(
 internal class VpnConnectionOrchestrator(
     private val xray: XrayRuntime,
     private val tunFactory: TunInterfaceFactory,
-    private val preparer: VpnConnectionPreparer,
-    private val settings: VpnSettingsCommitCoordinator,
     private val sidecars: VpnConnectedSidecars,
 ) {
     @Volatile private var tunnel: TunHandle? = null
@@ -114,6 +112,24 @@ internal class VpnConnectionOrchestrator(
 
     @Synchronized
     fun activeTransitionJob(): Job? = transitionJob
+
+    fun shutdown(
+        scope: CoroutineScope,
+        releaseResources: () -> Unit,
+        cancelBackgroundWork: () -> Unit,
+    ): Job {
+        invalidate()
+        cancelReadinessProbe()
+        val activeTransition = activeTransitionJob()
+        return scope.launch {
+            try {
+                activeTransition?.cancelAndJoin()
+                withLifecycleLock { releaseResources() }
+            } finally {
+                cancelBackgroundWork()
+            }
+        }
+    }
 
     @Synchronized
     fun currentTunnel(): TunHandle? = tunnel

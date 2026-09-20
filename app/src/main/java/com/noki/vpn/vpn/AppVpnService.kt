@@ -12,6 +12,7 @@ import android.util.Log
 import com.noki.vpn.AppNotificationPoller
 import com.noki.vpn.AppLogUploadCoordinator
 import com.noki.vpn.NokiQuickSettingsTileService
+import com.noki.vpn.data.AtomicStoredSettingsStore
 import com.noki.vpn.data.AuthTokenRefresher
 import com.noki.vpn.data.AdvancedSettings
 import com.noki.vpn.data.AndroidDeviceInfo
@@ -48,7 +49,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
@@ -78,7 +78,7 @@ class AppVpnService : VpnService() {
     private lateinit var warmupController: VpnWarmupController<BackendVpnSession>
     private lateinit var connectionPreparer: VpnConnectionPreparer
     private lateinit var temporaryVpnCoordinator: TemporaryVpnSessionCoordinator
-    private lateinit var settingsCommitCoordinator: VpnSettingsCommitCoordinator
+    private lateinit var settingsStore: AtomicStoredSettingsStore
     private lateinit var connectionOrchestrator: VpnConnectionOrchestrator
     private var backgroundJob: Job = SupervisorJob()
     private var backgroundScope: CoroutineScope = CoroutineScope(backgroundJob + Dispatchers.IO)
@@ -213,9 +213,9 @@ class AppVpnService : VpnService() {
                 )
             },
         )
-        settingsCommitCoordinator = VpnSettingsCommitCoordinator(connectionRepository)
+        settingsStore = connectionRepository
         statsCoordinator = VpnStatsCoordinator(
-            context = this,
+            repository = connectionRepository,
             scope = backgroundScope,
             scheduler = delayedTaskScheduler,
             measureConnectedLatencyMs = {
@@ -258,8 +258,6 @@ class AppVpnService : VpnService() {
         connectionOrchestrator = VpnConnectionOrchestrator(
             xray = controller,
             tunFactory = tunFactory,
-            preparer = connectionPreparer,
-            settings = settingsCommitCoordinator,
             sidecars = connectedSidecars,
         )
         notificationController.setScreenOn(screenStateMonitor.isInteractive())
@@ -318,8 +316,7 @@ class AppVpnService : VpnService() {
                     startTemporaryVpn()
                 } else {
                     startVpn(
-                        forceRefreshSession = options.forceRefreshSession,
-                        allowCachedFallback = options.allowCachedFallback,
+                        strategy = options.strategy,
                     )
                 }
             }
@@ -332,13 +329,9 @@ class AppVpnService : VpnService() {
         stopNetworkChangeMonitor()
         pendingStartOptions = null
         cancelDelayedVpnCallbacks()
-        connectionOrchestrator.invalidate()
-        connectionOrchestrator.cancelReadinessProbe()
-        val activeTransition = connectionOrchestrator.activeTransitionJob()
         val repository = SettingsRepository(this)
-        val destroyCoordinator = VpnDestroyCoordinator(
-            lifecycleMutex = connectionOrchestrator.lifecycleMutex,
-            cancelAndJoinActiveTransition = { activeTransition?.cancelAndJoin() },
+        connectionOrchestrator.shutdown(
+            scope = destroyCleanupScope,
             releaseResources = {
                 releaseVpnResources(
                     repository = repository,
@@ -347,41 +340,34 @@ class AppVpnService : VpnService() {
                 )
             },
             cancelBackgroundWork = backgroundJob::cancel,
-        )
-        destroyCleanupScope.launch {
-            destroyCoordinator.destroy()
-        }.invokeOnCompletion {
+        ).invokeOnCompletion {
             destroyCleanupJob.cancel()
         }
         super.onDestroy()
     }
 
-    private fun startVpn(
-        forceRefreshSession: Boolean,
-        allowCachedFallback: Boolean,
-    ) {
+    private fun admitStart(options: VpnServiceStartCommandPolicy.StartOptions): Boolean {
         val transition = connectionOrchestrator.transitionSnapshot()
         if (transition.active) {
-            val activeOperation = when (transition.operation) {
-                VpnConnectionOperation.STOP -> VpnServiceStartCommandPolicy.ActiveOperation.Stop
-                VpnConnectionOperation.RESTART -> VpnServiceStartCommandPolicy.ActiveOperation.Restart
-                else -> VpnServiceStartCommandPolicy.ActiveOperation.Connection
-            }
-            if (VpnServiceStartCommandPolicy.activeStartDecision(activeOperation) ==
+            if (VpnServiceStartCommandPolicy.activeStartDecision(transition.operation) ==
                 VpnServiceStartCommandPolicy.ActiveStartDecision.QueueAfterCleanup
             ) {
-                pendingStartOptions = VpnServiceStartCommandPolicy.StartOptions(forceRefreshSession, allowCachedFallback)
+                pendingStartOptions = options
             }
-            // STOP may have released the tunnel but still be staging a revoke.
-            // A state query can stopSelf in that gap; an admitted START must wait.
             broadcastState(currentState)
-            return
+            return false
         }
-
         pendingStartOptions = null
+        return true
+    }
+
+    private fun startVpn(
+        strategy: VpnPreparationStrategy,
+    ) {
+        if (!admitStart(VpnServiceStartCommandPolicy.StartOptions(strategy))) return
         if (tunnel != null && currentState == VpnConnectionState.CONNECTED) {
-            if (forceRefreshSession) {
-                refreshConnectedVpn(allowCachedFallback = allowCachedFallback)
+            if (strategy.forceRefreshSession) {
+                refreshConnectedVpn(allowCachedFallback = strategy.allowCachedFallback)
                 return
             }
             broadcastCurrentState()
@@ -397,35 +383,17 @@ class AppVpnService : VpnService() {
         launchConnectionTransition(repository) { generationId ->
             performFreshStart(
                 repository = repository,
-                forceRefreshSession = forceRefreshSession,
-                allowCachedFallback = allowCachedFallback,
+                strategy = strategy,
                 generationId = generationId,
             )
         }
     }
 
     private fun startTemporaryVpn() {
-        val transition = connectionOrchestrator.transitionSnapshot()
-        if (transition.active) {
-            val activeOperation = when (transition.operation) {
-                VpnConnectionOperation.STOP -> VpnServiceStartCommandPolicy.ActiveOperation.Stop
-                VpnConnectionOperation.RESTART -> VpnServiceStartCommandPolicy.ActiveOperation.Restart
-                else -> VpnServiceStartCommandPolicy.ActiveOperation.Connection
-            }
-            if (VpnServiceStartCommandPolicy.activeStartDecision(activeOperation) ==
-                VpnServiceStartCommandPolicy.ActiveStartDecision.QueueAfterCleanup
-            ) {
-                pendingStartOptions = VpnServiceStartCommandPolicy.StartOptions(
-                    forceRefreshSession = true,
-                    allowCachedFallback = false,
-                    runtimeMode = VpnRuntimeMode.AUTH_TEMP,
-                )
-            }
-            broadcastState(currentState)
-            return
-        }
-
-        pendingStartOptions = null
+        if (!admitStart(VpnServiceStartCommandPolicy.StartOptions(
+                strategy = VpnPreparationStrategy.FreshOnly,
+                runtimeMode = VpnRuntimeMode.AUTH_TEMP,
+            ))) return
         if (tunnel != null && currentState == VpnConnectionState.CONNECTED) {
             if (currentRuntimeMode == VpnRuntimeMode.AUTH_TEMP) {
                 broadcastCurrentState()
@@ -503,18 +471,16 @@ class AppVpnService : VpnService() {
 
     private suspend fun performFreshStart(
         repository: SettingsRepository,
-        forceRefreshSession: Boolean,
-        allowCachedFallback: Boolean,
+        strategy: VpnPreparationStrategy,
         generationId: Long,
     ) {
         val prepared = prepareConnectionSettings(
             repository = repository,
-            forceRefreshSession = forceRefreshSession,
-            allowCachedFallback = allowCachedFallback,
+            strategy = strategy,
             destructiveOnFailure = true,
         ) ?: return
         if (!connectionOrchestrator.isCurrent(generationId) || !currentCoroutineContext().isActive) return
-        val cachedStart = !forceRefreshSession && prepared.pendingWarmupSession == null
+        val cachedStart = !strategy.forceRefreshSession && prepared.pendingWarmupSession == null
         if (cachedStart) {
             repository.recordAppLog(
                 category = "vpn",
@@ -581,8 +547,7 @@ class AppVpnService : VpnService() {
 
     private suspend fun prepareConnectionSettings(
         repository: SettingsRepository,
-        forceRefreshSession: Boolean,
-        allowCachedFallback: Boolean,
+        strategy: VpnPreparationStrategy,
         destructiveOnFailure: Boolean,
         sessionSelection: VpnSessionSelection? = null,
         incidentId: String? = null,
@@ -590,8 +555,7 @@ class AppVpnService : VpnService() {
     ): PreparedVpnSession? {
         val startedAtMs = SystemClock.elapsedRealtime()
         return when (val outcome = connectionPreparer.prepare(
-            forceRefreshSession = forceRefreshSession,
-            allowCachedFallback = allowCachedFallback,
+            strategy = strategy,
             sessionSelection = sessionSelection,
             onRetry = { attempt, error ->
                 repository.recordAppLog(
@@ -714,7 +678,6 @@ class AppVpnService : VpnService() {
             }
             if (ConnectedWatchdogPolicy.retryFailureDecision(
                     isLockdown = isActiveLockdownRecovery(),
-                    stage = ConnectedWatchdogPolicy.RetryFailureStage.PermanentPrepare,
                 ) == ConnectedWatchdogPolicy.RetryFailureDecision.KeepTruthfulFailedAndReschedule
             ) {
                 enterTruthfulLockdownFailure(repository, reason)
@@ -753,17 +716,19 @@ class AppVpnService : VpnService() {
     }
 
     private fun commitSettingsTransaction(
-        repository: SettingsRepository,
         preparationBaseline: StoredSettings,
         candidate: StoredSettings,
         result: VpnSettingsTransactionPolicy.Result,
     ): StoredSettings {
-        val outcome = settingsCommitCoordinator.commitRuntimeCandidate(
-            previousRuntime = activeSettings ?: preparationBaseline,
-            preparationBaseline = preparationBaseline,
-            candidate = candidate,
-            result = result,
-        )
+        val outcome = settingsStore.updateAndReturn { persisted ->
+            VpnSettingsTransactionPolicy.commitRuntimeCandidate(
+                previousRuntime = activeSettings ?: preparationBaseline,
+                preparationBaseline = preparationBaseline,
+                candidate = candidate,
+                result = result,
+                persisted = persisted,
+            ).let { it.persisted to it }
+        }
         activeSettings = outcome.runtime
         if (outcome.requiresFreshPrepare) scheduleFreshSelectionPrepare()
         return outcome.runtime
@@ -782,15 +747,13 @@ class AppVpnService : VpnService() {
         previousSettings: StoredSettings,
         candidateSettings: StoredSettings,
     ) {
-        var domainOutcome: VpnSettingsTransactionPolicy.RuntimeDomainOutcome? = null
-        repository.updateSettings { persisted ->
+        val outcome = repository.updateAndReturn { persisted ->
             VpnSettingsTransactionPolicy.rollbackRuntimeDomains(
                 previous = previousSettings,
                 candidate = candidateSettings,
                 persisted = persisted,
-            ).also { domainOutcome = it }.persisted
+            ).let { it.persisted to it }
         }
-        val outcome = checkNotNull(domainOutcome)
         activeSettings = outcome.runtime
         if (outcome.requiresReapply) scheduleRuntimeDomainReapply()
     }
@@ -843,8 +806,7 @@ class AppVpnService : VpnService() {
                 }
                 currentState == VpnConnectionState.FAILED || currentState == VpnConnectionState.DISCONNECTED -> {
                     startVpn(
-                        forceRefreshSession = startDecision.forceRefreshSession,
-                        allowCachedFallback = startDecision.allowCachedFallback,
+                        strategy = startDecision,
                     )
                 }
             }
@@ -973,7 +935,7 @@ class AppVpnService : VpnService() {
                 }
                 return@withLifecycleLock
             }
-            val failureReason = VpnReadinessPolicy.failureReason(started, readinessLatencyMs)
+            val failureReason = VpnReadinessPolicy.failureReason(started, readinessLatencyMs)?.code
             if (failureReason == null) {
                 finishTunnelConnected(
                     repository = repository,
@@ -1043,8 +1005,7 @@ class AppVpnService : VpnService() {
             if (failedNodeId != null && settings.userProfile.serverSelectionMode != com.noki.vpn.data.ServerSelectionMode.SERVER) {
                 val nextNode = prepareConnectionSettings(
                     repository = repository,
-                    forceRefreshSession = true,
-                    allowCachedFallback = false,
+                    strategy = VpnPreparationStrategy.FreshOnly,
                     destructiveOnFailure = false,
                     sessionSelection = VpnSessionSelection(
                         countryCode = settings.userProfile.selectedCountryCode,
@@ -1078,7 +1039,7 @@ class AppVpnService : VpnService() {
         }
         val activeTunnel = tunnel
         if (activeTunnel == null || currentState != VpnConnectionState.CONNECTED) {
-            startVpn(forceRefreshSession = true, allowCachedFallback = allowCachedFallback)
+            startVpn(strategy = if (allowCachedFallback) VpnPreparationStrategy.FreshWithCachedFallback else VpnPreparationStrategy.FreshOnly,)
             return
         }
         if (connectionOrchestrator.transitionSnapshot().active) {
@@ -1092,8 +1053,7 @@ class AppVpnService : VpnService() {
         launchConnectionTransition(repository) { generationId ->
             val prepared = prepareConnectionSettings(
                 repository = repository,
-                forceRefreshSession = true,
-                allowCachedFallback = allowCachedFallback,
+                strategy = if (allowCachedFallback) VpnPreparationStrategy.FreshWithCachedFallback else VpnPreparationStrategy.FreshOnly,
                 destructiveOnFailure = false,
             ) ?: return@launchConnectionTransition
             val settings = normalizeInstalledPackages(prepared.candidateSettings)
@@ -1136,8 +1096,7 @@ class AppVpnService : VpnService() {
             var cachedPrepareFailure: Throwable? = null
             val cachedPrepared = prepareConnectionSettings(
                 repository = repository,
-                forceRefreshSession = false,
-                allowCachedFallback = true,
+                strategy = VpnPreparationStrategy.CachedFirst,
                 destructiveOnFailure = false,
                 incidentId = incidentId,
                 onFailure = { cachedPrepareFailure = it },
@@ -1171,7 +1130,10 @@ class AppVpnService : VpnService() {
                     return@launchConnectionTransition
                 }
             }
-            for ((index, target) in targets.withIndex()) {
+            val attempts = targets.asSequence().flatMap { target ->
+                List(target.attempts) { target }
+            }
+            for ((index, target) in attempts.withIndex()) {
                 val attempt = index + 2
                 repository.recordAppLog(
                     category = "vpn",
@@ -1183,8 +1145,7 @@ class AppVpnService : VpnService() {
                 var prepareFailure: Throwable? = null
                 val prepared = prepareConnectionSettings(
                     repository = repository,
-                    forceRefreshSession = true,
-                    allowCachedFallback = false,
+                    strategy = VpnPreparationStrategy.FreshOnly,
                     destructiveOnFailure = false,
                     sessionSelection = VpnSessionSelection(
                         countryCode = countryCode,
@@ -1233,7 +1194,7 @@ class AppVpnService : VpnService() {
                 category = "vpn",
                 level = "error",
                 message = "watchdog_recovery_exhausted",
-                details = "incident_id=$incidentId; attempts=${targets.size + 1}; location=$failedLocationCode",
+                details = "incident_id=$incidentId; attempts=${targets.sumOf { it.attempts } + 1}; location=$failedLocationCode",
                 errorType = "runtime_readiness_probe_failed",
                 serverCountry = notificationServerLabel,
                 connectionSuccess = false,
@@ -1246,7 +1207,7 @@ class AppVpnService : VpnService() {
                     reason = "runtime_readiness_probe_failed",
                     countryCode = countryCode,
                     locationCode = failedLocationCode,
-                    recoveryAttempts = targets.size + 1,
+                    recoveryAttempts = targets.sumOf { it.attempts } + 1,
                     outcome = "failed",
                     occurredAt = Instant.now().toString(),
                 ),
@@ -1455,14 +1416,13 @@ class AppVpnService : VpnService() {
                 return@withLifecycleLock false
             }
             val connectedSettings = if (runtimeSettingsOnly) {
-                var domainOutcome: VpnSettingsTransactionPolicy.RuntimeDomainOutcome? = null
-                repository.updateSettings { persisted ->
+                val outcome = repository.updateAndReturn { persisted ->
                     VpnSettingsTransactionPolicy.acceptRuntimeDomains(
                         candidate = settings,
                         persisted = persisted,
-                    ).also { domainOutcome = it }.persisted
+                    ).let { it.persisted to it }
                 }
-                checkNotNull(domainOutcome).also { outcome ->
+                outcome.also {
                     activeSettings = outcome.runtime
                     if (outcome.requiresReapply) scheduleRuntimeDomainReapply()
                 }.runtime
@@ -1529,7 +1489,6 @@ class AppVpnService : VpnService() {
                 restoreRuntimeDomainSettings(repository, previousSettings, settings)
             } else {
                 commitSettingsTransaction(
-                    repository = repository,
                     preparationBaseline = preparationBaseline,
                     candidate = settings,
                     result = VpnSettingsTransactionPolicy.Result.RolledBack,
@@ -1545,7 +1504,7 @@ class AppVpnService : VpnService() {
                     kind = ConnectedActivationKind.ROLLBACK,
                 ),
             )
-            statsCoordinator.recordInitialLatency(repository, previousSettings, owner, previousReadiness)
+            statsCoordinator.recordInitialLatency(previousSettings, owner, previousReadiness)
             broadcastState(VpnConnectionState.CONNECTED)
             startForeground(NOTIFICATION_ID, createActiveNotification())
             repository.recordAppLog(
@@ -1565,7 +1524,7 @@ class AppVpnService : VpnService() {
         }
         val failureReason = checkNotNull(
             VpnReadinessPolicy.failureReason(previousStarted, previousReadiness),
-        )
+        ).code
         failClosedAfterReplacementFailure(
             repository = repository,
             settings = settings,
@@ -1589,7 +1548,6 @@ class AppVpnService : VpnService() {
         if (runtimeMode == VpnRuntimeMode.ACCOUNT) resetTransientRecovery()
         val connectedSettings = if (persistSettings) {
             commitSettingsTransaction(
-                repository = repository,
                 preparationBaseline = preparationBaseline,
                 candidate = settings,
                 result = VpnSettingsTransactionPolicy.Result.Accepted,
@@ -1613,7 +1571,7 @@ class AppVpnService : VpnService() {
             ),
         )
         if (runtimeMode == VpnRuntimeMode.ACCOUNT) {
-            statsCoordinator.recordInitialLatency(repository, connectedSettings, owner, readinessLatencyMs)
+            statsCoordinator.recordInitialLatency(connectedSettings, owner, readinessLatencyMs)
         }
         broadcastState(VpnConnectionState.CONNECTED)
         startForeground(NOTIFICATION_ID, createActiveNotification())
@@ -1802,7 +1760,7 @@ class AppVpnService : VpnService() {
             val latencyMs = measureRuntimeReadiness(recovery = false)
             if (!currentCoroutineContext().isActive) return@launch
             val outcome = watchdogController.completeProbe(owner, latencyMs)
-            if (!outcome.accepted) return@launch
+            if (outcome == WatchdogProbeOutcome.Ignored) return@launch
             connectionOrchestrator.withLifecycleLock {
                 if (!currentCoroutineContext().isActive ||
                     !connectionOrchestrator.isCurrent(owner.generationId) ||
@@ -1811,7 +1769,7 @@ class AppVpnService : VpnService() {
                 ) {
                     return@withLifecycleLock
                 }
-                if (outcome.healthy) {
+                if (outcome == WatchdogProbeOutcome.Healthy) {
                     latencyMs?.let { latency ->
                         SettingsRepository(this@AppVpnService).recordEndpointResult(
                             endpointCode = settings.profile.endpointCode,
@@ -1821,7 +1779,7 @@ class AppVpnService : VpnService() {
                         )
                     }
                 }
-                when (val action = outcome.action) {
+                when (val action = (outcome as? WatchdogProbeOutcome.Unhealthy)?.action ?: WatchdogAction.None) {
                     WatchdogAction.None -> Unit
                     WatchdogAction.Refresh -> recoverConnectedVpn(settings)
                     WatchdogAction.ReleaseOutsideLockdown -> {
@@ -2031,8 +1989,7 @@ class AppVpnService : VpnService() {
                     restartTemporaryVpn()
                 } else {
                     startVpn(
-                        forceRefreshSession = plan.forceRefreshSession,
-                        allowCachedFallback = plan.allowCachedFallback,
+                        strategy = plan.strategy,
                     )
                 }
             }
@@ -2042,8 +1999,7 @@ class AppVpnService : VpnService() {
                         restartTemporaryVpn()
                     } else {
                         restartVpn(
-                            forceRefreshSession = plan.forceRefreshSession,
-                            allowCachedFallback = plan.allowCachedFallback,
+                            strategy = plan.strategy,
                         )
                     }
                 }
@@ -2250,8 +2206,7 @@ class AppVpnService : VpnService() {
                             startTemporaryVpn()
                         } else {
                             startVpn(
-                                forceRefreshSession = pending.forceRefreshSession,
-                                allowCachedFallback = pending.allowCachedFallback,
+                                strategy = pending.strategy,
                             )
                         }
                     } else {
@@ -2303,13 +2258,13 @@ class AppVpnService : VpnService() {
             restartTemporaryVpn()
             return
         }
-        restartVpn(forceRefreshSession = true, allowCachedFallback = true)
+        restartVpn(strategy = VpnPreparationStrategy.FreshWithCachedFallback,)
     }
 
     private fun reconnectFailedClosedVpn(allowCachedFallback: Boolean) {
         val activeTunnel = tunnel
         if (activeTunnel == null || currentState != VpnConnectionState.FAILED) {
-            restartVpn(forceRefreshSession = false, allowCachedFallback = allowCachedFallback)
+            restartVpn(strategy = if (allowCachedFallback) VpnPreparationStrategy.CachedFirst else VpnPreparationStrategy.CachedFirstWithoutFallback,)
             return
         }
         if (connectionOrchestrator.transitionSnapshot().active) {
@@ -2329,8 +2284,7 @@ class AppVpnService : VpnService() {
         launchConnectionTransition(repository) { generationId ->
             val prepared = prepareConnectionSettings(
                 repository = repository,
-                forceRefreshSession = true,
-                allowCachedFallback = allowCachedFallback,
+                strategy = if (allowCachedFallback) VpnPreparationStrategy.FreshWithCachedFallback else VpnPreparationStrategy.FreshOnly,
                 destructiveOnFailure = false,
             ) ?: return@launchConnectionTransition
             val settings = normalizeInstalledPackages(prepared.candidateSettings)
@@ -2364,7 +2318,6 @@ class AppVpnService : VpnService() {
         if (!isXrayRuntimeAvailable()) {
             if (ConnectedWatchdogPolicy.retryFailureDecision(
                     isLockdown = isActiveLockdownRecovery(),
-                    stage = ConnectedWatchdogPolicy.RetryFailureStage.XrayOrReadiness,
                 ) == ConnectedWatchdogPolicy.RetryFailureDecision.KeepTruthfulFailedAndReschedule
             ) {
                 connectionOrchestrator.stopXray()
@@ -2413,7 +2366,7 @@ class AppVpnService : VpnService() {
         }
         val failureReason = checkNotNull(
             VpnReadinessPolicy.failureReason(started, readinessLatencyMs),
-        )
+        ).code
 
         val failedHealth = repository.recordEndpointResult(
             endpointCode = settings.profile.endpointCode,
@@ -2432,7 +2385,6 @@ class AppVpnService : VpnService() {
         )
         if (ConnectedWatchdogPolicy.retryFailureDecision(
                 isLockdown = isActiveLockdownRecovery(),
-                stage = ConnectedWatchdogPolicy.RetryFailureStage.XrayOrReadiness,
             ) == ConnectedWatchdogPolicy.RetryFailureDecision.KeepTruthfulFailedAndReschedule
         ) {
             connectionOrchestrator.stopXray()
@@ -2450,8 +2402,7 @@ class AppVpnService : VpnService() {
     }
 
     private fun restartVpn(
-        forceRefreshSession: Boolean,
-        allowCachedFallback: Boolean,
+        strategy: VpnPreparationStrategy,
     ) {
         val repository = SettingsRepository(this)
         pendingStartOptions = null
@@ -2476,8 +2427,7 @@ class AppVpnService : VpnService() {
             repository.recordAppLog("vpn", message = "service_restart_start")
             performFreshStart(
                 repository = repository,
-                forceRefreshSession = forceRefreshSession,
-                allowCachedFallback = allowCachedFallback,
+                strategy = strategy,
                 generationId = generationId,
             )
         }
@@ -2581,7 +2531,7 @@ class AppVpnService : VpnService() {
             return
         }
         val repository = SettingsRepository(this)
-        statsCoordinator.start(repository, settings, owner)
+        statsCoordinator.start(settings, owner)
         DeviceTrafficMonitor.start(sessionId = checkNotNull(connectedAtMillis))
         startNotificationTicker()
         startNetworkChangeMonitor(activeEndpointNetworkKind)

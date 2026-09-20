@@ -1,7 +1,6 @@
 package com.noki.vpn.vpn
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VpnHandoverPolicyTest {
@@ -10,8 +9,7 @@ class VpnHandoverPolicyTest {
         assertEquals(
             VpnHandoverPolicy.Plan(
                 action = VpnHandoverPolicy.Action.RestartTunnel,
-                allowCachedFallback = true,
-                forceRefreshSession = false,
+                strategy = VpnPreparationStrategy.CachedFirst,
             ),
             VpnHandoverPolicy.plan(
                 hasTunnel = true,
@@ -42,7 +40,6 @@ class VpnHandoverPolicyTest {
         )
 
         assertEquals(VpnHandoverPolicy.Action.FreshStart, plan.action)
-        assertTrue(plan.allowCachedFallback)
-        assertEquals(false, plan.forceRefreshSession)
+        assertEquals(VpnPreparationStrategy.CachedFirst, plan.strategy)
     }
 }

@@ -13,7 +13,10 @@ data class AuthSessionCommitResult(
 internal interface AtomicStoredSettingsStore {
     fun load(): StoredSettings
 
-    fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings
+    fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R
+
+    fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings =
+        updateAndReturn { current -> transform(current).let { it to it } }
 }
 
 internal interface AtomicAuthSettingsStore : AtomicStoredSettingsStore {

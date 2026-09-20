@@ -15,24 +15,20 @@ class ConnectedWatchdogPolicyTest {
     }
 
     @Test
-    fun lockdownPermanentPrepareFailureStaysFailedAndReschedules() {
+    fun lockdownRetryFailureStaysFailedAndReschedules() {
         assertEquals(
             ConnectedWatchdogPolicy.RetryFailureDecision.KeepTruthfulFailedAndReschedule,
             ConnectedWatchdogPolicy.retryFailureDecision(
                 isLockdown = true,
-                stage = ConnectedWatchdogPolicy.RetryFailureStage.PermanentPrepare,
             ),
         )
     }
 
     @Test
-    fun lockdownXrayOrReadinessFailureStaysFailedAndReschedules() {
+    fun retryFailureOutsideLockdownUsesGeneralFailure() {
         assertEquals(
-            ConnectedWatchdogPolicy.RetryFailureDecision.KeepTruthfulFailedAndReschedule,
-            ConnectedWatchdogPolicy.retryFailureDecision(
-                isLockdown = true,
-                stage = ConnectedWatchdogPolicy.RetryFailureStage.XrayOrReadiness,
-            ),
+            ConnectedWatchdogPolicy.RetryFailureDecision.UseGeneralFailure,
+            ConnectedWatchdogPolicy.retryFailureDecision(isLockdown = false),
         )
     }
 
@@ -119,8 +115,7 @@ class ConnectedWatchdogPolicyTest {
     fun unexpectedDropRetriesCurrentServerTwiceBeforeCountryFailover() {
         assertEquals(
             listOf(
-                ConnectedWatchdogPolicy.RecoveryTarget(locationCode = "lv-2"),
-                ConnectedWatchdogPolicy.RecoveryTarget(locationCode = "lv-2"),
+                ConnectedWatchdogPolicy.RecoveryTarget(locationCode = "lv-2", attempts = 2),
                 ConnectedWatchdogPolicy.RecoveryTarget(excludeLocationCode = "lv-2"),
             ),
             ConnectedWatchdogPolicy.recoveryTargets("lv-2"),
@@ -160,17 +155,11 @@ class ConnectedWatchdogPolicyTest {
     @Test
     fun firstTransientRestartUsesCacheThenRequiresFreshSelection() {
         assertEquals(
-            ConnectedWatchdogPolicy.TransientStartDecision(
-                forceRefreshSession = false,
-                allowCachedFallback = true,
-            ),
+            VpnPreparationStrategy.CachedFirst,
             ConnectedWatchdogPolicy.transientStartDecision(attempt = 0),
         )
         assertEquals(
-            ConnectedWatchdogPolicy.TransientStartDecision(
-                forceRefreshSession = true,
-                allowCachedFallback = false,
-            ),
+            VpnPreparationStrategy.FreshOnly,
             ConnectedWatchdogPolicy.transientStartDecision(attempt = 1),
         )
     }

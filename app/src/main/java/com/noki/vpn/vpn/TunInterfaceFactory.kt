@@ -40,9 +40,10 @@ internal class AndroidTunInterfaceFactory(
                 runCatching { service.packageManager.getApplicationInfo(candidate, 0) }.isSuccess
             },
         )
-        if (!routingRules.canEstablishTunnel) {
-            throw TunInterfaceConfigurationException(routingRules.failureReason ?: "rules_error")
+        if (routingRules is AppVpnRoutingRules.Rejected) {
+            throw TunInterfaceConfigurationException(routingRules.failureReason)
         }
+        check(routingRules is AppVpnRoutingRules.Ready)
         try {
             routingRules.allowedPackages.forEach(builder::addAllowedApplication)
             routingRules.disallowedPackages.forEach(builder::addDisallowedApplication)

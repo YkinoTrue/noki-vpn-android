@@ -9,14 +9,17 @@ class TelegramCallbackPolicyTest {
     fun staleCallbackIsIgnoredWithoutCancellingCurrentAttempt() {
         assertTrue(
             TelegramCallbackPolicy.shouldIgnore(
-                TelegramLoginCallbackResult.Failure("stale_login_callback"),
+                TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale),
             ),
         )
         assertFalse(
             TelegramCallbackPolicy.shouldIgnore(
-                TelegramLoginCallbackResult.Failure("invalid_callback"),
+                TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.ProviderError("invalid_callback")),
             ),
         )
+        assertFalse(TelegramCallbackPolicy.shouldIgnore(
+            TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.ProviderError("stale_login_callback")),
+        ))
     }
 
     @Test

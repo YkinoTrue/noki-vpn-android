@@ -19,7 +19,7 @@ class NetworkCapabilityPolicyTest {
     }
 
     @Test
-    fun activeVpnConflictsOnlyWhileNokiIsDisconnected() {
+    fun activeVpnConflictsWhileNokiIsDisconnectedOrFailed() {
         assertTrue(
             NetworkCapabilityPolicy.hasCompetingVpn(
                 activeNetworkUsesVpn = true,

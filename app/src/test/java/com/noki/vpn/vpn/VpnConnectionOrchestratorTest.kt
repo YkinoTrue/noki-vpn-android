@@ -1,6 +1,5 @@
 package com.noki.vpn.vpn
 
-import com.noki.vpn.data.AtomicStoredSettingsStore
 import com.noki.vpn.data.DefaultStoredSettingsFactory
 import com.noki.vpn.data.EndpointRankingPolicy
 import com.noki.vpn.data.StoredSettings
@@ -10,7 +9,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
-import kotlinx.coroutines.sync.Mutex
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -25,10 +23,8 @@ import org.junit.Test
 class VpnConnectionOrchestratorTest {
     @Test
     fun `independent lifecycle operations wait and cancellation preserves the holder`() = runBlocking {
-        val store = InMemorySettingsStore()
         val orchestrator = VpnConnectionOrchestrator(
             RecordingXrayRuntime(mutableListOf()), UnusedTunInterfaceFactory,
-            unusedPreparer(store), VpnSettingsCommitCoordinator(store),
             RecordingConnectedSidecars(mutableListOf()),
         )
         val release = CompletableDeferred<Unit>()
@@ -49,12 +45,9 @@ class VpnConnectionOrchestratorTest {
 
     @Test
     fun `invalidated lifecycle cannot deliver an owned completion`() = runBlocking {
-        val store = InMemorySettingsStore()
         val orchestrator = VpnConnectionOrchestrator(
             xray = RecordingXrayRuntime(mutableListOf()),
             tunFactory = UnusedTunInterfaceFactory,
-            preparer = unusedPreparer(store),
-            settings = VpnSettingsCommitCoordinator(store),
             sidecars = RecordingConnectedSidecars(mutableListOf()),
         )
         val finishCleanup = CompletableDeferred<Unit>()
@@ -83,12 +76,9 @@ class VpnConnectionOrchestratorTest {
             entered = firstCancellationEntered,
             release = releaseFirstCancellation,
         )
-        val store = InMemorySettingsStore()
         val orchestrator = VpnConnectionOrchestrator(
             xray = runtime,
             tunFactory = UnusedTunInterfaceFactory,
-            preparer = unusedPreparer(store),
-            settings = VpnSettingsCommitCoordinator(store),
             sidecars = RecordingConnectedSidecars(mutableListOf()),
         )
         val seed = orchestrator.launchTransition(
@@ -162,12 +152,9 @@ class VpnConnectionOrchestratorTest {
     @Test
     fun `replacement cancels native readiness before waiting for previous transition`() = runBlocking {
         val events = mutableListOf<String>()
-        val store = InMemorySettingsStore()
         val orchestrator = VpnConnectionOrchestrator(
             xray = RecordingXrayRuntime(events),
             tunFactory = UnusedTunInterfaceFactory,
-            preparer = unusedPreparer(store),
-            settings = VpnSettingsCommitCoordinator(store),
             sidecars = RecordingConnectedSidecars(events),
         )
         val first = orchestrator.launchTransition(
@@ -204,12 +191,9 @@ class VpnConnectionOrchestratorTest {
     @Test
     fun `replacement transition cancels the previous lifecycle owner`() = runBlocking {
         val events = mutableListOf<String>()
-        val store = InMemorySettingsStore()
         val orchestrator = VpnConnectionOrchestrator(
             xray = RecordingXrayRuntime(events),
             tunFactory = UnusedTunInterfaceFactory,
-            preparer = unusedPreparer(store),
-            settings = VpnSettingsCommitCoordinator(store),
             sidecars = RecordingConnectedSidecars(events),
         )
         val first = orchestrator.launchTransition(
@@ -248,16 +232,13 @@ class VpnConnectionOrchestratorTest {
         val events = mutableListOf<String>()
         val runtime = RecordingXrayRuntime(events)
         val tun = RecordingTunHandle(events)
-        val store = InMemorySettingsStore()
         val sidecars = RecordingConnectedSidecars(events)
         val orchestrator = VpnConnectionOrchestrator(
             xray = runtime,
             tunFactory = UnusedTunInterfaceFactory,
-            preparer = unusedPreparer(store),
-            settings = VpnSettingsCommitCoordinator(store),
             sidecars = sidecars,
         )
-        val settings = store.load()
+        val settings = DefaultStoredSettingsFactory.create()
         val underlay = UnderlyingNetworkSnapshot(
             kind = EndpointRankingPolicy.NetworkKind.WIFI,
             signature = "wifi:test",
@@ -299,18 +280,36 @@ class VpnConnectionOrchestratorTest {
     @Test
     fun `destroy waits for active transition before releasing resources and background work`() = runBlocking {
         val transitionMayFinish = CompletableDeferred<Unit>()
+        val transitionCancelling = CompletableDeferred<Unit>()
         val events = mutableListOf<String>()
         val runtime = RecordingXrayRuntime(events)
         val tun = RecordingTunHandle(events)
         val scheduler = RecordingDelayedTaskScheduler(events)
         val delayedOwner = Any()
-        val coordinator = VpnDestroyCoordinator(
-            lifecycleMutex = Mutex(),
-            cancelAndJoinActiveTransition = {
-                events += "cancel_transition"
-                transitionMayFinish.await()
-                events += "join_transition"
-            },
+        val orchestrator = VpnConnectionOrchestrator(
+            runtime, UnusedTunInterfaceFactory, RecordingConnectedSidecars(events),
+        )
+        var completed = false
+        val active = orchestrator.launchTransition(
+            scope = this,
+            operation = VpnConnectionOperation.CONNECTION,
+            onOwnedCompletion = { completed = true },
+            onError = { _, error -> throw error },
+        ) {
+            try {
+                awaitCancellation()
+            } finally {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    events += "cancel_transition"
+                    transitionCancelling.complete(Unit)
+                    transitionMayFinish.await()
+                    events += "join_transition"
+                }
+            }
+        }
+        yield()
+        val destroy = orchestrator.shutdown(
+            scope = this,
             releaseResources = {
                 scheduler.cancel(delayedOwner)
                 runtime.stop()
@@ -318,24 +317,20 @@ class VpnConnectionOrchestratorTest {
             },
             cancelBackgroundWork = { events += "cancel_background" },
         )
+        try {
+            transitionCancelling.await()
+            assertEquals(listOf("cancel_probe", "cancel_transition"), events)
+            assertFalse(destroy.isCompleted)
+        } finally {
+            transitionMayFinish.complete(Unit)
+        }
+        destroy.join()
+        active.join()
 
-        val destroy = async { coordinator.destroy() }
-        yield()
-
-        assertEquals(listOf("cancel_transition"), events)
-
-        transitionMayFinish.complete(Unit)
-        destroy.await()
-
+        assertFalse(completed)
         assertEquals(
-            listOf(
-                "cancel_transition",
-                "join_transition",
-                "cancel_delayed",
-                "stop_xray",
-                "close_tun",
-                "cancel_background",
-            ),
+            listOf("cancel_probe", "cancel_transition", "join_transition", "cancel_delayed",
+                "stop_xray", "close_tun", "cancel_background"),
             events,
         )
     }
@@ -343,68 +338,47 @@ class VpnConnectionOrchestratorTest {
     @Test
     fun `destroy releases resources only after acquiring lifecycle ownership`() = runBlocking {
         val events = mutableListOf<String>()
-        val lifecycleMutex = Mutex(locked = true)
-        val coordinator = VpnDestroyCoordinator(
-            lifecycleMutex = lifecycleMutex,
-            cancelAndJoinActiveTransition = { events += "join_transition" },
+        val orchestrator = VpnConnectionOrchestrator(
+            RecordingXrayRuntime(events), UnusedTunInterfaceFactory, RecordingConnectedSidecars(events),
+        )
+        orchestrator.lifecycleMutex.lock()
+        val destroy = orchestrator.shutdown(
+            scope = this,
             releaseResources = { events += "release_resources" },
             cancelBackgroundWork = { events += "cancel_background" },
         )
-
-        val destroy = async { coordinator.destroy() }
-        yield()
-
-        assertEquals(listOf("join_transition"), events)
-        assertFalse(destroy.isCompleted)
-
-        lifecycleMutex.unlock()
-        destroy.await()
-
-        assertEquals(
-            listOf("join_transition", "release_resources", "cancel_background"),
-            events,
-        )
+        try {
+            yield()
+            assertEquals(listOf("cancel_probe"), events)
+            assertFalse(destroy.isCompleted)
+        } finally {
+            orchestrator.lifecycleMutex.unlock()
+        }
+        destroy.join()
+        assertEquals(listOf("cancel_probe", "release_resources", "cancel_background"), events)
     }
 
     @Test
     fun `destroy cancels background work even when resource close fails`() {
         val events = mutableListOf<String>()
-        val coordinator = VpnDestroyCoordinator(
-            lifecycleMutex = Mutex(),
-            cancelAndJoinActiveTransition = { events += "join_transition" },
-            releaseResources = {
-                events += "release_resources"
-                error("close failed")
-            },
-            cancelBackgroundWork = { events += "cancel_background" },
+        val orchestrator = VpnConnectionOrchestrator(
+            RecordingXrayRuntime(events), UnusedTunInterfaceFactory, RecordingConnectedSidecars(events),
         )
-
         assertThrows(IllegalStateException::class.java) {
-            runBlocking { coordinator.destroy() }
+            runBlocking {
+                orchestrator.shutdown(
+                    scope = this,
+                    releaseResources = {
+                        events += "release_resources"
+                        error("close failed")
+                    },
+                    cancelBackgroundWork = { events += "cancel_background" },
+                ).join()
+            }
         }
-        assertEquals(
-            listOf("join_transition", "release_resources", "cancel_background"),
-            events,
-        )
+        assertEquals(listOf("cancel_probe", "release_resources", "cancel_background"), events)
     }
-}
 
-private fun unusedPreparer(store: AtomicStoredSettingsStore) = VpnConnectionPreparer(
-    store = store,
-    currentNetworkKind = { EndpointRankingPolicy.NetworkKind.OTHER },
-    resolveStart = { _, _, _, _ -> error("not used") },
-    refreshAccessToken = { error("not used") },
-)
-
-private class InMemorySettingsStore : AtomicStoredSettingsStore {
-    private var settings = DefaultStoredSettingsFactory.create()
-
-    override fun load(): StoredSettings = settings
-
-    override fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings {
-        settings = transform(settings)
-        return settings
-    }
 }
 
 private object UnusedTunInterfaceFactory : TunInterfaceFactory {

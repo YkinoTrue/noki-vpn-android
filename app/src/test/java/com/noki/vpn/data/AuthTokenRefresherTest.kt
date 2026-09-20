@@ -267,9 +267,11 @@ internal class InMemoryAtomicStoredSettingsStore(
 
     override fun load(): StoredSettings = synchronized(lock) { settings }
 
-    override fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings =
+    override fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R =
         synchronized(lock) {
-            transform(settings).also { settings = it }
+            val (updated, result) = transform(settings)
+            settings = updated
+            result
         }
 
     override fun clearAuthAndStageRefreshToken(): StoredSettings = synchronized(lock) {

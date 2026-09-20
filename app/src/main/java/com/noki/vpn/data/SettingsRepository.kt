@@ -13,16 +13,16 @@ import java.time.Instant
 import java.util.Locale
 
 internal object SettingsAtomicUpdate {
-    fun <T> transform(
+    fun <T, R> transform(
         lock: Any,
         load: () -> T,
-        transform: (T) -> T,
+        transform: (T) -> Pair<T, R>,
         save: (T) -> Unit,
-    ): T {
+    ): R {
         return synchronized(lock) {
-            val updated = transform(load())
+            val (updated, result) = transform(load())
             save(updated)
-            updated
+            result
         }
     }
 }
@@ -545,7 +545,7 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         loadSettingsLocked()
     }
 
-    override fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings {
+    override fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R {
         return SettingsAtomicUpdate.transform(
             lock = SETTINGS_LOCK,
             load = ::loadSettingsLocked,

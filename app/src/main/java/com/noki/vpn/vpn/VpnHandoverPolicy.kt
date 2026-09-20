@@ -9,8 +9,7 @@ object VpnHandoverPolicy {
 
     data class Plan(
         val action: Action,
-        val allowCachedFallback: Boolean,
-        val forceRefreshSession: Boolean,
+        val strategy: VpnPreparationStrategy,
     )
 
     fun plan(
@@ -21,18 +20,15 @@ object VpnHandoverPolicy {
         return when {
             !hasTunnel -> Plan(
                 Action.FreshStart,
-                allowCachedFallback = true,
-                forceRefreshSession = false,
+                strategy = VpnPreparationStrategy.CachedFirst,
             )
             activeSignature == nextSignature -> Plan(
                 Action.NoAction,
-                allowCachedFallback = false,
-                forceRefreshSession = false,
+                strategy = VpnPreparationStrategy.CachedFirst,
             )
             else -> Plan(
                 Action.RestartTunnel,
-                allowCachedFallback = true,
-                forceRefreshSession = false,
+                strategy = VpnPreparationStrategy.CachedFirst,
             )
         }
     }

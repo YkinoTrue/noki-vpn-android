@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import com.noki.vpn.data.AccentPalette
 import com.noki.vpn.data.AppFilterMode
 import com.noki.vpn.data.AppLanguage
@@ -31,6 +33,10 @@ class MainViewModel(
 
     val uiState: AppUiState
         get() = runtime.uiState
+
+    internal suspend fun awaitReady() {
+        snapshotFlow { uiState.isReady }.first { it }
+    }
 
     fun setPendingVpnStartMode(mode: VpnRuntimeMode) = runtime.setPendingVpnStartMode(mode)
 

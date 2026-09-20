@@ -1,6 +1,5 @@
 package com.noki.vpn.vpn
 
-import android.content.Context
 import android.net.TrafficStats
 import android.os.Process
 import android.os.SystemClock
@@ -12,13 +11,12 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 internal class VpnStatsCoordinator(
-    context: Context,
+    private val repository: SettingsRepository,
     private val scope: CoroutineScope,
     scheduler: DelayedTaskScheduler,
     private val measureConnectedLatencyMs: suspend () -> Int?,
     private val onLatencySample: (locationCode: String, latencyMs: Int) -> Unit,
 ) {
-    private val appContext = context.applicationContext
     private var owner: RuntimeOwner? = null
     private var latencyJob: Job? = null
     private val tracker = VpnRuntimeStatsTracker(
@@ -31,7 +29,7 @@ internal class VpnStatsCoordinator(
         onScheduledFlush = { flush(finalFlush = false) },
     )
 
-    fun start(repository: SettingsRepository, settings: StoredSettings, runtimeOwner: RuntimeOwner) {
+    fun start(settings: StoredSettings, runtimeOwner: RuntimeOwner) {
         latencyJob?.cancel()
         latencyJob = null
         owner = runtimeOwner
@@ -56,7 +54,6 @@ internal class VpnStatsCoordinator(
     }
 
     fun recordInitialLatency(
-        repository: SettingsRepository,
         settings: StoredSettings,
         runtimeOwner: RuntimeOwner,
         initialLatencyMs: Long?,
@@ -70,29 +67,28 @@ internal class VpnStatsCoordinator(
             onLatencySample(locationCode, latencyMs)
         } else {
             tracker.markLatencySample(runtimeOwner)
-            recordImmediateLatency(repository, LatencySampleRequest(runtimeOwner, date, locationCode))
+            recordImmediateLatency(LatencySampleRequest(runtimeOwner, date, locationCode))
         }
     }
 
     fun flush(finalFlush: Boolean) {
         val runtimeOwner = owner ?: return
         val result = tracker.flush(runtimeOwner, finalFlush) ?: return
-        val repository = SettingsRepository(appContext)
         repository.addDailyStatsDelta(
             date = result.delta.date,
             rxBytes = result.delta.rxBytes,
             txBytes = result.delta.txBytes,
             onlineSeconds = result.delta.onlineSeconds,
         )
-        result.latencyRequest?.let { recordImmediateLatency(repository, it) }
+        result.latencyRequest?.let { recordImmediateLatency(it) }
     }
 
     fun refreshLatency() {
         val request = tracker.requestLatencySample() ?: return
-        recordImmediateLatency(SettingsRepository(appContext), request)
+        recordImmediateLatency(request)
     }
 
-    private fun recordImmediateLatency(repository: SettingsRepository, request: LatencySampleRequest) {
+    private fun recordImmediateLatency(request: LatencySampleRequest) {
         if (request.locationCode.isBlank() || latencyJob?.isActive == true) return
         latencyJob = scope.launch {
             if (!tracker.accepts(request)) return@launch

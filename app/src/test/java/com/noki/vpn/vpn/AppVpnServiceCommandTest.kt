@@ -89,7 +89,7 @@ class AppVpnServiceCommandTest {
 
         fixture.prepareFailure(IllegalStateException("auth_required"))
         assertEquals(tunnel, fixture.orchestrator.currentTunnel())
-        fixture.invoke("restartVpn", true, false)
+        fixture.invoke("restartVpn", VpnPreparationStrategy.FreshOnly)
         fixture.orchestrator.activeTransitionJob()!!.join()
         assertEquals(tunnel, fixture.orchestrator.currentTunnel())
         assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
@@ -128,7 +128,7 @@ class AppVpnServiceCommandTest {
         var probes = 0
         val samples = mutableListOf<Int>()
         val coordinator = VpnStatsCoordinator(
-            context = fixture.service,
+            repository = repository,
             scope = this,
             scheduler = object : DelayedTaskScheduler {
                 override fun schedule(owner: Any, delayMillis: Long, task: () -> Unit) = Unit
@@ -137,7 +137,7 @@ class AppVpnServiceCommandTest {
             measureConnectedLatencyMs = { probes++; yield(); measured },
             onLatencySample = { _, latency -> samples += latency },
         )
-        coordinator.start(repository, settings, RuntimeOwner(1L, 1L))
+        coordinator.start(settings, RuntimeOwner(1L, 1L))
         coordinator.refreshLatency()
         coordinator.refreshLatency()
         repeat(3) { yield() }
@@ -327,7 +327,7 @@ class AppVpnServiceCommandTest {
             fixture.startAccount()
 
             assertFalse("queued START still needs this service", shadowOf(fixture.service).isStoppedBySelf)
-            assertEquals(VpnServiceStartCommandPolicy.StartOptions(true, false), fixture.pendingStart())
+            assertEquals(VpnServiceStartCommandPolicy.StartOptions(VpnPreparationStrategy.FreshOnly), fixture.pendingStart())
         } finally {
             stop.cancel()
         }
@@ -345,7 +345,7 @@ class AppVpnServiceCommandTest {
             fixture.startAccount()
 
             assertEquals(
-                VpnServiceStartCommandPolicy.StartOptions(true, false),
+                VpnServiceStartCommandPolicy.StartOptions(VpnPreparationStrategy.FreshOnly),
                 fixture.pendingStart(),
             )
         } finally {
@@ -365,7 +365,7 @@ class AppVpnServiceCommandTest {
             fixture.invoke("startTemporaryVpn")
 
             assertEquals(
-                VpnServiceStartCommandPolicy.StartOptions(true, false, VpnRuntimeMode.AUTH_TEMP),
+                VpnServiceStartCommandPolicy.StartOptions(VpnPreparationStrategy.FreshOnly, VpnRuntimeMode.AUTH_TEMP),
                 fixture.pendingStart(),
             )
         } finally {
@@ -379,7 +379,7 @@ class AppVpnServiceCommandTest {
         fixture.stop(1)
         // The START was already admitted while cleanup was in progress. Keep this
         // regression independent of the separate connected-start admission bug.
-        fixture.set("pendingStartOptions", VpnServiceStartCommandPolicy.StartOptions(true, false))
+        fixture.set("pendingStartOptions", VpnServiceStartCommandPolicy.StartOptions(VpnPreparationStrategy.FreshOnly))
         fixture.orchestrator.activeTransitionJob()!!.join()
 
         fixture.orchestrator.lifecycleMutex.lock()
@@ -411,8 +411,11 @@ class AppVpnServiceCommandTest {
         private val store = object : AtomicStoredSettingsStore {
             private var value = DefaultStoredSettingsFactory.create()
             override fun load(): StoredSettings = value
-            override fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings =
-                transform(value).also { value = it }
+            override fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R {
+                val (updated, result) = transform(value)
+                value = updated
+                return result
+            }
         }
         private val scheduler = HandlerDelayedTaskScheduler(android.os.Handler(Looper.getMainLooper()))
         private val preparer = VpnConnectionPreparer(
@@ -450,8 +453,6 @@ class AppVpnServiceCommandTest {
                     }
                 }
             },
-            preparer = preparer,
-            settings = VpnSettingsCommitCoordinator(store),
             sidecars = OwnedVpnConnectedSidecars(onStart = { _, _ -> }, onStop = {}),
         )
 
@@ -470,11 +471,11 @@ class AppVpnServiceCommandTest {
                 evidenceFreshMillis = 1L,
             ))
             set("warmupController", VpnWarmupController<BackendVpnSession>(scheduler, 1L))
-            set("statsCoordinator", VpnStatsCoordinator(service, scope, scheduler, { null }, { _, _ -> }))
+            set("statsCoordinator", VpnStatsCoordinator(SettingsRepository(service), scope, scheduler, { null }, { _, _ -> }))
             set("isXrayRuntimeAvailable", { true })
             set("underlyingNetworkSource", AndroidUnderlyingNetworkSource(service))
             set("notificationFactory", VpnNotificationFactory(service))
-            set("settingsCommitCoordinator", VpnSettingsCommitCoordinator(store))
+            set("settingsStore", store)
             set("networkMonitor", VpnNetworkMonitor(
                 source = { error("unexpected network callback") },
                 scheduler = scheduler,
@@ -488,7 +489,7 @@ class AppVpnServiceCommandTest {
             })
         }
 
-        fun startAccount() = invoke("startVpn", true, false)
+        fun startAccount() = invoke("startVpn", VpnPreparationStrategy.FreshOnly)
 
         fun enableKillSwitch() {
             store.updateSettings { it.copy(advancedSettings = it.advancedSettings.copy(killSwitchEnabled = true)) }
@@ -584,7 +585,7 @@ class AppVpnServiceCommandTest {
         }
 
         fun invoke(name: String, vararg args: Any) {
-            val types = args.map { if (it is Boolean) Boolean::class.javaPrimitiveType else Int::class.javaPrimitiveType }
+            val types = args.map { when (it) { is Boolean -> Boolean::class.javaPrimitiveType; is Int -> Int::class.javaPrimitiveType; else -> it.javaClass } }
             AppVpnService::class.java.getDeclaredMethod(name, *types.toTypedArray())
                 .apply { isAccessible = true }.invoke(service, *args)
         }

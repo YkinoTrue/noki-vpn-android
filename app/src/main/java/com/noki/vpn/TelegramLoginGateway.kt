@@ -24,6 +24,14 @@ internal data class TelegramLoginStartRequest(
     val clientState: String,
 )
 
+internal sealed interface TelegramCallbackFailure {
+    val code: String
+    data object Stale : TelegramCallbackFailure { override val code = "stale_login_callback" }
+    data object InvalidBrowserState : TelegramCallbackFailure { override val code = "invalid_browser_state" }
+    data object NotHandled : TelegramCallbackFailure { override val code = "callback_not_handled" }
+    data class ProviderError(override val code: String) : TelegramCallbackFailure
+}
+
 internal sealed interface TelegramLoginCallbackResult {
     data class AuthorizationCode(
         val code: String,
@@ -41,7 +49,7 @@ internal sealed interface TelegramLoginCallbackResult {
 
     data object Cancelled : TelegramLoginCallbackResult
 
-    data class Failure(val code: String) : TelegramLoginCallbackResult
+    data class Failure(val reason: TelegramCallbackFailure) : TelegramLoginCallbackResult
 }
 
 internal class TelegramLoginGateway(
@@ -109,7 +117,7 @@ internal class TelegramLoginGateway(
     fun handleLoginResponse(callbackUri: Uri?): TelegramLoginCallbackResult? {
         callbackUri ?: return null
         if (!TelegramCallbackPolicy.accepts(callbackUri.toString())) {
-            return TelegramLoginCallbackResult.Failure("stale_login_callback")
+            return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale)
         }
         return if (TelegramCallbackPolicy.isBrowser(callbackUri.toString())) {
             consumeBrowserCallback(
@@ -137,21 +145,21 @@ internal class TelegramLoginGateway(
             (state != null && state.trim() != session.clientState) ||
             (state == null && !externalFlowPending)
         ) {
-            return TelegramLoginCallbackResult.Failure("stale_login_callback")
+            return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale)
         }
         if (error != null) {
-            if (state == null) return TelegramLoginCallbackResult.Failure("stale_login_callback")
+            if (state == null) return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale)
             activeSession = null
             return error.toCallbackResult()
         }
         val authorizationCode = code?.trim().orEmpty()
         if (authorizationCode.isBlank() || authorizationCode.length > 2048) {
-            return TelegramLoginCallbackResult.Failure("stale_login_callback")
+            return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale)
         }
         // Native Telegram may return only code. PKCE, not an unverified callback,
         // decides whether this candidate belongs to our current authorization.
         if (authorizationCode in session.pendingNativeCodes || session.pendingNativeCodes.size >= 2) {
-            return TelegramLoginCallbackResult.Failure("stale_login_callback")
+            return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale)
         }
         session.pendingNativeCodes.add(authorizationCode)
         return TelegramLoginCallbackResult.AuthorizationCode(
@@ -184,13 +192,13 @@ internal class TelegramLoginGateway(
     ): TelegramLoginCallbackResult {
         val session = activeSession
         if (session == null || state?.trim() != session.clientState) {
-            return TelegramLoginCallbackResult.Failure("stale_login_callback")
+            return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.Stale)
         }
         activeSession = null
         error?.let { return it.toCallbackResult() }
         val safeState = state.trim()
         if (!SAFE_BROWSER_STATE.matches(safeState)) {
-            return TelegramLoginCallbackResult.Failure("invalid_browser_state")
+            return TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.InvalidBrowserState)
         }
         return TelegramLoginCallbackResult.BrowserState(
             state = safeState,
@@ -277,7 +285,7 @@ internal class TelegramLoginGateway(
             TelegramLoginCallbackResult.Cancelled
         } else {
             TelegramLoginCallbackResult.Failure(
-                safeCode.takeIf(SAFE_ERROR_CODE::matches) ?: "telegram_callback_error",
+                TelegramCallbackFailure.ProviderError(safeCode.takeIf(SAFE_ERROR_CODE::matches) ?: "telegram_callback_error"),
             )
         }
     }

@@ -24,7 +24,7 @@ internal object TelegramCallbackPolicy {
 
     fun shouldIgnore(result: TelegramLoginCallbackResult): Boolean =
         result is TelegramLoginCallbackResult.Failure &&
-            result.code == "stale_login_callback"
+            result.reason == TelegramCallbackFailure.Stale
 
     private fun acceptsNative(uri: URI): Boolean =
         !uri.isOpaque &&

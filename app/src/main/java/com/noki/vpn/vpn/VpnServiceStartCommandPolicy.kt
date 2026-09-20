@@ -1,42 +1,23 @@
 package com.noki.vpn.vpn
 
-internal class OwnedDelayedCallback(callback: () -> Unit) {
-    val runnable = Runnable(callback)
-
-    fun schedule(
-        remove: (Runnable) -> Unit,
-        post: (Runnable) -> Unit,
-    ) {
-        remove(runnable)
-        post(runnable)
-    }
-
-    fun cancel(remove: (Runnable) -> Unit) {
-        remove(runnable)
-    }
-}
-
 enum class VpnRuntimeMode {
     ACCOUNT,
     AUTH_TEMP,
 }
 
 object VpnServiceStartCommandPolicy {
-    enum class ActiveOperation { Stop, Restart, Connection }
-
     enum class ActiveStartDecision { QueueAfterCleanup, CoalesceWithRestart, Ignore }
 
     enum class TemporaryStopDecision { NotRequested, StopAndRevoke, RevokeOnly }
 
-    fun activeStartDecision(operation: ActiveOperation): ActiveStartDecision = when (operation) {
-        ActiveOperation.Stop -> ActiveStartDecision.QueueAfterCleanup
-        ActiveOperation.Restart -> ActiveStartDecision.CoalesceWithRestart
-        ActiveOperation.Connection -> ActiveStartDecision.Ignore
+    internal fun activeStartDecision(operation: VpnConnectionOperation?): ActiveStartDecision = when (operation) {
+        VpnConnectionOperation.STOP -> ActiveStartDecision.QueueAfterCleanup
+        VpnConnectionOperation.RESTART -> ActiveStartDecision.CoalesceWithRestart
+        VpnConnectionOperation.CONNECTION, null -> ActiveStartDecision.Ignore
     }
 
     data class StartOptions(
-        val forceRefreshSession: Boolean,
-        val allowCachedFallback: Boolean,
+        val strategy: VpnPreparationStrategy,
         val runtimeMode: VpnRuntimeMode = VpnRuntimeMode.ACCOUNT,
     )
 
@@ -47,16 +28,14 @@ object VpnServiceStartCommandPolicy {
     ): StartOptions {
         if (action == TEMPORARY_VPN_ACTION) {
             return StartOptions(
-                forceRefreshSession = true,
-                allowCachedFallback = false,
+                strategy = VpnPreparationStrategy.FreshOnly,
                 runtimeMode = VpnRuntimeMode.AUTH_TEMP,
             )
         }
         val isSystemAlwaysOn = action == SYSTEM_VPN_SERVICE_ACTION
         val forceRefreshSession = isNullIntent || isSystemAlwaysOn || refreshSessionExtra
         return StartOptions(
-            forceRefreshSession = forceRefreshSession,
-            allowCachedFallback = true,
+            strategy = if (forceRefreshSession) VpnPreparationStrategy.FreshWithCachedFallback else VpnPreparationStrategy.CachedFirst,
             runtimeMode = VpnRuntimeMode.ACCOUNT,
         )
     }

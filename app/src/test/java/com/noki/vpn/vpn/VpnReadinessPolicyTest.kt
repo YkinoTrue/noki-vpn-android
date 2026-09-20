@@ -16,8 +16,8 @@ class VpnReadinessPolicyTest {
 
     @Test
     fun startupAndPostStartupFailuresRemainDistinct() {
-        assertEquals("core_start_error", VpnReadinessPolicy.failureReason(started = false, delayMs = null))
-        assertEquals("runtime_readiness_error", VpnReadinessPolicy.failureReason(started = true, delayMs = null))
+        assertEquals(VpnReadinessPolicy.Failure.CoreStart, VpnReadinessPolicy.failureReason(started = false, delayMs = null))
+        assertEquals(VpnReadinessPolicy.Failure.Probe, VpnReadinessPolicy.failureReason(started = true, delayMs = null))
         assertNull(VpnReadinessPolicy.failureReason(started = true, delayMs = 42L))
     }
 }

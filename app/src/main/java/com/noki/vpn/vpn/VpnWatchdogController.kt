@@ -17,11 +17,11 @@ internal enum class WatchdogEvidence {
     UID_TRAFFIC,
 }
 
-internal data class WatchdogProbeOutcome(
-    val accepted: Boolean,
-    val healthy: Boolean,
-    val action: WatchdogAction,
-)
+internal sealed interface WatchdogProbeOutcome {
+    data object Ignored : WatchdogProbeOutcome
+    data object Healthy : WatchdogProbeOutcome
+    data class Unhealthy(val action: WatchdogAction) : WatchdogProbeOutcome
+}
 
 internal class VpnWatchdogController(
     private val scheduler: DelayedTaskScheduler,
@@ -80,20 +80,20 @@ internal class VpnWatchdogController(
         latencyMs: Long?,
     ): WatchdogProbeOutcome {
         if (activeOwner != owner || activeProbe == null) {
-            return WatchdogProbeOutcome(false, false, WatchdogAction.None)
+            return WatchdogProbeOutcome.Ignored
         }
         activeProbe = null
         val healthy = VpnReadinessPolicy.accept(latencyMs)
         if (healthy) {
             failureCount = 0
             recordEvidence(WatchdogEvidence.XRAY_PROBE)
-            return WatchdogProbeOutcome(true, true, WatchdogAction.None)
+            return WatchdogProbeOutcome.Healthy
         }
         return when (ConnectedWatchdogPolicy.probeDecision(false, failureCount)) {
             ConnectedWatchdogPolicy.ProbeDecision.Healthy -> error("Failed probe cannot be healthy")
             ConnectedWatchdogPolicy.ProbeDecision.Retry -> {
                 failureCount += 1
-                WatchdogProbeOutcome(true, false, WatchdogAction.None)
+                WatchdogProbeOutcome.Unhealthy(WatchdogAction.None)
             }
             ConnectedWatchdogPolicy.ProbeDecision.Recover -> {
                 failureCount += 1
@@ -118,7 +118,7 @@ internal class VpnWatchdogController(
                         }
                     }
                 }
-                WatchdogProbeOutcome(true, false, action)
+                WatchdogProbeOutcome.Unhealthy(action)
             }
         }
     }

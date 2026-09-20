@@ -1,15 +1,44 @@
 package com.noki.vpn.vpn
 
 import com.noki.vpn.data.StoredSettings
+import com.noki.vpn.data.EndpointSelectionMode
+import com.noki.vpn.data.PlanCode
+import com.noki.vpn.data.ServerSelectionMode
 
 object VpnSettingsTransactionPolicy {
+    private data class SelectionKey(
+        val endpointSelectionMode: EndpointSelectionMode,
+        val manualEndpointCode: String,
+        val manualEndpointGroupKey: String,
+        val planCode: PlanCode,
+        val planCodeRaw: String,
+        val countryCode: String,
+        val serverSelectionMode: ServerSelectionMode,
+        val nodeId: String,
+    )
+
+    private fun StoredSettings.selectionKey() = SelectionKey(
+        advancedSettings.endpointSelectionMode,
+        advancedSettings.manualEndpointCode,
+        advancedSettings.manualEndpointGroupKey,
+        userProfile.selectedPlanCode,
+        userProfile.selectedPlanCodeRaw,
+        userProfile.selectedCountryCode,
+        userProfile.serverSelectionMode,
+        userProfile.selectedNodeId,
+    )
+
     data class RuntimeCommitOutcome(
         val persisted: StoredSettings,
         val runtime: StoredSettings,
-        val candidateStale: Boolean,
-        val desiredSelectionChanged: Boolean = false,
-        val requiresFreshPrepare: Boolean = candidateStale,
-    )
+        val result: Result,
+        val desiredSelectionChanged: Boolean,
+    ) {
+        val candidateStale: Boolean
+            get() = result == Result.Accepted && desiredSelectionChanged
+        val requiresFreshPrepare: Boolean
+            get() = desiredSelectionChanged && (result == Result.Accepted || result == Result.RolledBack)
+    }
 
     fun commitRuntimeCandidate(
         preparationBaseline: StoredSettings,
@@ -29,10 +58,8 @@ object VpnSettingsTransactionPolicy {
                 result == Result.Accepted -> merged
                 else -> previousRuntime
             },
-            candidateStale = stale,
+            result = result,
             desiredSelectionChanged = desiredSelectionChanged,
-            requiresFreshPrepare = desiredSelectionChanged &&
-                (result == Result.Accepted || result == Result.RolledBack),
         )
     }
 
@@ -87,14 +114,7 @@ object VpnSettingsTransactionPolicy {
         previous: StoredSettings,
         persisted: StoredSettings,
     ): Boolean {
-        return persisted.advancedSettings.endpointSelectionMode != previous.advancedSettings.endpointSelectionMode ||
-            persisted.advancedSettings.manualEndpointCode != previous.advancedSettings.manualEndpointCode ||
-            persisted.advancedSettings.manualEndpointGroupKey != previous.advancedSettings.manualEndpointGroupKey ||
-            persisted.userProfile.selectedPlanCode != previous.userProfile.selectedPlanCode ||
-            persisted.userProfile.selectedPlanCodeRaw != previous.userProfile.selectedPlanCodeRaw ||
-            persisted.userProfile.selectedCountryCode != previous.userProfile.selectedCountryCode ||
-            persisted.userProfile.serverSelectionMode != previous.userProfile.serverSelectionMode ||
-            persisted.userProfile.selectedNodeId != previous.userProfile.selectedNodeId
+        return persisted.selectionKey() != previous.selectionKey()
     }
 
     enum class Result {

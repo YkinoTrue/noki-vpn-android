@@ -57,7 +57,6 @@ class AppBroadcastNotifierTest {
 
         assertNotEquals(nonce(firstIntent), nonce(secondIntent))
         assertTrue(accepts(firstIntent))
-        AppNotificationActionNonceStore.consume(application, requireNotNull(nonce(firstIntent)))
 
         assertFalse(accepts(firstIntent))
         assertTrue(accepts(secondIntent))
@@ -82,7 +81,7 @@ class AppBroadcastNotifierTest {
         assertEquals(2, manager.activeNotifications.size)
         assertEquals(original.contentIntent, replacement.contentIntent)
         val replacementIntent = tap(replacement)
-        assertEquals("unsupported_action", action(replacementIntent))
+        assertNull(action(replacementIntent))
         assertFalse(accepts(replacementIntent))
         assertTrue(accepts(tap(other)))
     }
@@ -100,6 +99,53 @@ class AppBroadcastNotifierTest {
         }.notification
     }
 
+    @Test
+    fun `expired and evicted nonces cannot be consumed`() {
+        val start = 1_000L
+        val expired = AppNotificationActionNonceStore.issue(application, start)
+        assertNull(AppNotificationActionNonceStore.validateAndConsume(
+            application, MainActivity.APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE, expired,
+            start + AppNotificationActionNonceStore.TTL_MILLIS,
+        ))
+        val oldest = AppNotificationActionNonceStore.issue(application, start)
+        repeat(AppNotificationActionNonceStore.MAX_NONCES) {
+            AppNotificationActionNonceStore.issue(application, start + it + 1)
+        }
+        assertNull(AppNotificationActionNonceStore.validateAndConsume(
+            application, MainActivity.APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE, oldest,
+            start + AppNotificationActionNonceStore.MAX_NONCES,
+        ))
+    }
+
+    @Test
+    fun `unsupported action cannot consume a valid nonce`() {
+        val nonce = AppNotificationActionNonceStore.issue(application)
+        assertNull(AppNotificationActionNonceStore.validateAndConsume(application, "unknown", nonce))
+        assertEquals(AppNotificationAction.OpenSecurityUpdate,
+            AppNotificationActionNonceStore.validateAndConsume(
+                application, MainActivity.APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE, nonce,
+            ))
+    }
+
+    @Test
+    fun `concurrent consumers accept a nonce only once`() {
+        val nonce = AppNotificationActionNonceStore.issue(application)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val accepted = java.util.concurrent.atomic.AtomicInteger()
+        val workers = List(8) {
+            Thread {
+                start.await()
+                if (AppNotificationActionNonceStore.validateAndConsume(
+                        application, MainActivity.APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE, nonce,
+                    ) != null) accepted.incrementAndGet()
+            }.apply { start() }
+        }
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+        assertTrue(workers.none { it.isAlive })
+        assertEquals(1, accepted.get())
+    }
+
     private fun tap(notification: Notification): Intent {
         notification.contentIntent.send()
         return requireNotNull(shadowOf(application).nextStartedActivity)
@@ -109,10 +155,9 @@ class AppBroadcastNotifierTest {
 
     private fun nonce(intent: Intent) = intent.getStringExtra(MainActivity.EXTRA_APP_NOTIFICATION_ACTION_NONCE)
 
-    private fun accepts(intent: Intent) = AppNotificationActionPolicy.shouldAccept(
+    private fun accepts(intent: Intent) = AppNotificationActionNonceStore.validateAndConsume(
+        context = application,
         action = action(intent),
         nonce = nonce(intent),
-        issuedNonces = AppNotificationActionNonceStore.issuedNonces(application),
-        allowedActions = setOf(MainActivity.APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE),
-    )
+    ) != null
 }

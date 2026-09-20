@@ -18,7 +18,7 @@ internal class TelegramAuthCoordinator(
 
     suspend fun resolveCallback(result: TelegramLoginCallbackResult): TelegramLoginResult = when (result) {
         TelegramLoginCallbackResult.Cancelled -> TelegramLoginResult.Cancelled
-        is TelegramLoginCallbackResult.Failure -> TelegramLoginResult.Failure(result.code)
+        is TelegramLoginCallbackResult.Failure -> TelegramLoginResult.Failure(result.reason.code)
         is TelegramLoginCallbackResult.AuthorizationCode -> exchange {
             oidcApi.exchangeTelegramOidcCode(result.code, result.codeVerifier)
         }

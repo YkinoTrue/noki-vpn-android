@@ -20,8 +20,9 @@ class SettingsMutationEffectTest {
 private class EffectSettingsStore : AtomicStoredSettingsStore {
     private var value = DefaultStoredSettingsFactory.create()
     override fun load(): StoredSettings = value
-    override fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings {
-        value = transform(value)
-        return value
+    override fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R {
+        val (updated, result) = transform(value)
+        value = updated
+        return result
     }
 }

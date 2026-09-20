@@ -1,5 +1,7 @@
 package com.noki.vpn.vpn
 
+import com.noki.vpn.data.AtomicStoredSettingsStore
+import com.noki.vpn.data.StoredSettings
 import com.noki.vpn.data.AppFilterMode
 import com.noki.vpn.data.DefaultStoredSettingsFactory
 import com.noki.vpn.data.SettingsAtomicUpdate
@@ -8,6 +10,50 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VpnSettingsTransactionPolicyTest {
+    @Test
+    fun `commit decides and writes against latest stored settings atomically`() {
+        val baseline = DefaultStoredSettingsFactory.create()
+        val previousRuntime = baseline.copy(profile = baseline.profile.copy(host = "working.example"))
+        val candidate = baseline.copy(profile = baseline.profile.copy(host = "candidate.example"))
+        val latest = baseline.copy(selectedPackages = setOf("latest.user.edit"))
+        val store = RecordingStore(latest)
+
+        val outcome = store.updateAndReturn { persisted ->
+            VpnSettingsTransactionPolicy.commitRuntimeCandidate(
+            previousRuntime = previousRuntime,
+            preparationBaseline = baseline,
+            candidate = candidate,
+            result = VpnSettingsTransactionPolicy.Result.Accepted,
+            persisted = persisted,
+            ).let { it.persisted to it }
+        }
+
+        assertEquals("candidate.example", outcome.runtime.profile.host)
+        assertEquals(setOf("latest.user.edit"), outcome.persisted.selectedPackages)
+        assertEquals(outcome.persisted, store.current)
+        assertEquals(1, store.updateCount)
+    }
+
+    @Test
+    fun onlyAcceptedOrRolledBackChangedSelectionsRequestPreparation() {
+        val baseline = DefaultStoredSettingsFactory.create()
+        for (result in VpnSettingsTransactionPolicy.Result.entries) {
+            for (changed in listOf(false, true)) {
+                val persisted = if (changed) baseline.copy(
+                    userProfile = baseline.userProfile.copy(selectedCountryCode = "DE"),
+                ) else baseline
+                val outcome = VpnSettingsTransactionPolicy.commitRuntimeCandidate(
+                    baseline, baseline, baseline, result, persisted,
+                )
+                assertEquals(changed && result == VpnSettingsTransactionPolicy.Result.Accepted, outcome.candidateStale)
+                assertEquals(changed && result in listOf(
+                    VpnSettingsTransactionPolicy.Result.Accepted,
+                    VpnSettingsTransactionPolicy.Result.RolledBack,
+                ), outcome.requiresFreshPrepare)
+            }
+        }
+    }
+
     @Test
     fun rolledBackCandidatePreservesNewDesiredSelectionAndRestoredRuntimeAndRequestsReprepare() {
         val baseline = DefaultStoredSettingsFactory.create()
@@ -76,7 +122,7 @@ class VpnSettingsTransactionPolicyTest {
             load = { stored },
             transform = { current ->
                 transformHeldLock = Thread.holdsLock(lock)
-                current + 1
+                (current + 1) to "committed"
             },
             save = { value ->
                 saveHeldLock = Thread.holdsLock(lock)
@@ -86,7 +132,7 @@ class VpnSettingsTransactionPolicyTest {
 
         assertTrue(transformHeldLock)
         assertTrue(saveHeldLock)
-        assertEquals(2, updated)
+        assertEquals("committed", updated)
         assertEquals(2, stored)
     }
 
@@ -235,5 +281,20 @@ class VpnSettingsTransactionPolicyTest {
                 ),
             )
         }
+    }
+}
+
+private class RecordingStore(
+    var current: StoredSettings,
+) : AtomicStoredSettingsStore {
+    var updateCount: Int = 0
+
+    override fun load(): StoredSettings = current
+
+    override fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R {
+        updateCount += 1
+        val (updated, result) = transform(current)
+        current = updated
+        return result
     }
 }

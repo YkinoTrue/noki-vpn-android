@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                while (!viewModel.uiState.isReady) delay(50)
+                viewModel.awaitReady()
                 viewModel.observeDownloadedAndroidUpdates()
             }
         }
@@ -352,7 +352,7 @@ class MainActivity : ComponentActivity() {
         val callbackUri = intent?.data ?: return
         intent.data = null
         val result = telegramLoginGateway.handleLoginResponse(callbackUri)
-            ?: TelegramLoginCallbackResult.Failure("callback_not_handled")
+            ?: TelegramLoginCallbackResult.Failure(TelegramCallbackFailure.NotHandled)
         if (TelegramCallbackPolicy.shouldIgnore(result)) {
             if (TelegramCallbackPolicy.accepts(callbackUri.toString())) {
                 viewModel.handleTelegramLoginCallback(result)
@@ -367,7 +367,7 @@ class MainActivity : ComponentActivity() {
 
     private fun dispatchTelegramCallbackWhenReady(result: TelegramLoginCallbackResult) {
         lifecycleScope.launch {
-            while (!viewModel.uiState.isReady) delay(25)
+            viewModel.awaitReady()
             viewModel.handleTelegramLoginCallback(result)
         }
     }
@@ -415,29 +415,15 @@ class MainActivity : ComponentActivity() {
         val nonce = intent.getStringExtra(EXTRA_APP_NOTIFICATION_ACTION_NONCE)?.trim()
         intent.removeExtra(EXTRA_APP_NOTIFICATION_ACTION)
         intent.removeExtra(EXTRA_APP_NOTIFICATION_ACTION_NONCE)
-        if (
-            !AppNotificationActionPolicy.shouldAccept(
-                action = action,
-                nonce = nonce,
-                issuedNonces = AppNotificationActionNonceStore.issuedNonces(this),
-                allowedActions = setOf(APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE),
-            )
-        ) {
-            return
-        }
-        AppNotificationActionNonceStore.consume(this, nonce.orEmpty())
-        val destination = when (action) {
-            APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE -> AppDestination.SECURITY
-            else -> return
-        }
+        val accepted = AppNotificationActionNonceStore.validateAndConsume(this, action, nonce) ?: return
         lifecycleScope.launch {
-            while (!viewModel.uiState.isReady) {
-                delay(50)
+            viewModel.awaitReady()
+            when (accepted) {
+                AppNotificationAction.OpenSecurityUpdate -> {
+                    viewModel.markAndroidUpdateAvailable()
+                    viewModel.openScreen(AppDestination.SECURITY)
+                }
             }
-            if (action == APP_NOTIFICATION_ACTION_OPEN_SECURITY_UPDATE) {
-                viewModel.markAndroidUpdateAvailable()
-            }
-            viewModel.openScreen(destination)
         }
     }
 

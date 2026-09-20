@@ -50,13 +50,12 @@ object AppBroadcastNotifier {
                     .appendPath(notification.id)
                     .build()
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                notification.action?.takeIf { it.isNotBlank() }?.let { action ->
-                    putExtra(MainActivity.EXTRA_APP_NOTIFICATION_ACTION, action)
-                    putExtra(
-                        MainActivity.EXTRA_APP_NOTIFICATION_ACTION_NONCE,
-                        AppNotificationActionNonceStore.issue(context),
-                    )
-                }
+                val action = AppNotificationAction.parse(notification.action)
+                putExtra(MainActivity.EXTRA_APP_NOTIFICATION_ACTION, action?.wireValue)
+                putExtra(
+                    MainActivity.EXTRA_APP_NOTIFICATION_ACTION_NONCE,
+                    action?.let { AppNotificationActionNonceStore.issue(context) },
+                )
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

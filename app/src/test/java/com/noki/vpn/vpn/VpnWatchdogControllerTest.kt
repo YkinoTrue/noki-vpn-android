@@ -52,8 +52,7 @@ class VpnWatchdogControllerTest {
 
         val stale = controller.completeProbe(first, latencyMs = null)
 
-        assertFalse(stale.accepted)
-        assertEquals(WatchdogAction.None, stale.action)
+        assertEquals(WatchdogProbeOutcome.Ignored, stale)
     }
 
     @Test
@@ -113,7 +112,7 @@ class VpnWatchdogControllerTest {
         val owner = watchdogOwner(core = 5L)
         controller.start(owner, DefaultStoredSettingsFactory.create(), initialXrayEvidence = true)
 
-        assertFalse(controller.completeProbe(owner, latencyMs = 25L).accepted)
+        assertEquals(WatchdogProbeOutcome.Ignored, controller.completeProbe(owner, latencyMs = 25L))
     }
 
     @Test
@@ -134,8 +133,7 @@ class VpnWatchdogControllerTest {
 
         controller.forceProbe()
 
-        assertTrue(completion.accepted)
-        assertTrue(completion.healthy)
+        assertEquals(WatchdogProbeOutcome.Healthy, completion)
     }
 
     private fun failedProbe(
@@ -143,7 +141,7 @@ class VpnWatchdogControllerTest {
         owner: ConnectedWatchdogPolicy.Owner,
     ): WatchdogAction {
         controller.forceProbe()
-        return controller.completeProbe(owner, latencyMs = null).action
+        return (controller.completeProbe(owner, latencyMs = null) as WatchdogProbeOutcome.Unhealthy).action
     }
 
     private fun watchdogOwner(core: Long) = ConnectedWatchdogPolicy.Owner(

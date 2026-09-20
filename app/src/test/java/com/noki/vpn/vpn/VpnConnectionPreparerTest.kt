@@ -37,8 +37,7 @@ class VpnConnectionPreparerTest {
 
         val result = withTimeout(1_000L) {
             preparer.prepare(
-                forceRefreshSession = true,
-                allowCachedFallback = false,
+                strategy = VpnPreparationStrategy.FreshOnly,
             )
         }
         assertTrue(result is VpnConnectionPreparer.Outcome.Failure)
@@ -60,8 +59,7 @@ class VpnConnectionPreparerTest {
         )
 
         val result = preparer.prepare(
-            forceRefreshSession = false,
-            allowCachedFallback = true,
+            strategy = VpnPreparationStrategy.CachedFirst,
         ) as VpnConnectionPreparer.Outcome.Success
 
         assertEquals(settings, result.session.preparationBaseline)
@@ -96,8 +94,7 @@ class VpnConnectionPreparerTest {
         )
 
         val result = preparer.prepare(
-            forceRefreshSession = true,
-            allowCachedFallback = true,
+            strategy = VpnPreparationStrategy.FreshWithCachedFallback,
         ) as VpnConnectionPreparer.Outcome.Success
 
         assertEquals(listOf("old-token", "new-token"), observedTokens)
@@ -120,8 +117,7 @@ class VpnConnectionPreparerTest {
         )
 
         val result = preparer.prepare(
-            forceRefreshSession = true,
-            allowCachedFallback = false,
+            strategy = VpnPreparationStrategy.FreshOnly,
         ) as VpnConnectionPreparer.Outcome.Failure
 
         assertTrue(result.error is BackendException)
@@ -143,8 +139,7 @@ class VpnConnectionPreparerTest {
 
         val result = withTimeout(1_000L) {
             preparer.prepare(
-                forceRefreshSession = true,
-                allowCachedFallback = false,
+                strategy = VpnPreparationStrategy.FreshOnly,
             )
         } as VpnConnectionPreparer.Outcome.Failure
 
@@ -165,8 +160,7 @@ class VpnConnectionPreparerTest {
         )
 
         preparer.prepare(
-            forceRefreshSession = true,
-            allowCachedFallback = false,
+            strategy = VpnPreparationStrategy.FreshOnly,
         )
         Unit
     }
@@ -194,8 +188,7 @@ class VpnConnectionPreparerTest {
         )
 
         val result = preparer.prepare(
-            forceRefreshSession = true,
-            allowCachedFallback = false,
+            strategy = VpnPreparationStrategy.FreshOnly,
         )
 
         assertEquals(VpnConnectionPreparer.Outcome.Failure::class, result::class)
@@ -223,8 +216,7 @@ class VpnConnectionPreparerTest {
         )
 
         preparer.prepare(
-            forceRefreshSession = true,
-            allowCachedFallback = false,
+            strategy = VpnPreparationStrategy.FreshOnly,
             sessionSelection = requested,
         )
 
@@ -253,9 +245,10 @@ private class PreparerStore(
 ) : AtomicStoredSettingsStore {
     override fun load(): StoredSettings = settings
 
-    override fun updateSettings(transform: (StoredSettings) -> StoredSettings): StoredSettings {
-        settings = transform(settings)
-        return settings
+    override fun <R> updateAndReturn(transform: (StoredSettings) -> Pair<StoredSettings, R>): R {
+        val (updated, result) = transform(settings)
+        settings = updated
+        return result
     }
 
     fun replace(next: StoredSettings) {
