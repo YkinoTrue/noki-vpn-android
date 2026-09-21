@@ -55,6 +55,8 @@ internal class VpnConnectionOrchestrator(
     private var transitionJob: Job? = null
     private var transitionOperation: VpnConnectionOperation? = null
 
+    fun currentGenerationId(): Long = lifecycleGeneration.currentId()
+
     @Synchronized
     fun beginTransition(): Long = lifecycleGeneration.begin()
 

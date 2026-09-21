@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.launch
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import org.json.JSONObject
@@ -49,6 +50,174 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [28])
 @LooperMode(LooperMode.Mode.PAUSED)
 class AppVpnServiceCommandTest {
+    @Test
+    fun candidateDeadlineRetainsCompletedAlternativeAndCancelsStalledProbe() = runBlocking {
+        val started = mutableListOf<String>()
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var stalledCancelled = false
+        val began = System.nanoTime()
+        val result = EndpointProbeRunner.collectCandidateProbes(
+            listOf(hysteriaCandidate("stalled"), hysteriaCandidate("healthy"), hysteriaCandidate("excluded")),
+            deadlineMillis = 500L,
+            staggerMillis = 50L,
+        ) { candidate ->
+            started += candidate.code
+            if (candidate.code == "stalled") {
+                firstStarted.complete(Unit)
+                try { awaitCancellation() } finally { stalledCancelled = true }
+            } else {
+                assertEquals(true, firstStarted.isCompleted)
+                org.junit.Assert.assertTrue((System.nanoTime() - began) / 1_000_000 >= 40L)
+                EndpointProbeOutcome(candidate.code, false, null, 20L, null, 1, 1, true, false)
+            }
+        }
+        assertEquals(listOf("stalled", "healthy"), started)
+        assertEquals(listOf("healthy"), result.map { it.endpointCode })
+        assertEquals(true, stalledCancelled)
+        try {
+            EndpointProbeRunner.collectCandidateProbes(listOf(hysteriaCandidate("cancelled")), 500L, 0L) {
+                throw kotlinx.coroutines.CancellationException("session changed")
+            }
+            org.junit.Assert.fail("Context cancellation must not become a completed or failed candidate")
+        } catch (_: kotlinx.coroutines.CancellationException) { }
+    }
+
+    @Test
+    fun nativeProbeCancellationKeepsWorkerSlotsUntilCallsActuallyReturn() = runBlocking {
+        val started = java.util.concurrent.CountDownLatch(2)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val exited = java.util.concurrent.CountDownLatch(2)
+        val cancelled = java.util.concurrent.atomic.AtomicInteger()
+        val queuedStarted = java.util.concurrent.CountDownLatch(1)
+        var delivered = 0
+        val workers = (1..2).map {
+            launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                EndpointProbeRunner.awaitNativeProbe(
+                    measure = {
+                        started.countDown()
+                        try {
+                            check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                            20L
+                        } finally {
+                            exited.countDown()
+                        }
+                    },
+                    cancel = { cancelled.incrementAndGet() },
+                )
+                delivered++
+            }
+        }
+        try {
+            org.junit.Assert.assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            workers.forEach { it.cancel() }
+            assertEquals(2, cancelled.get())
+            val queued = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                EndpointProbeRunner.awaitNativeProbe(
+                    measure = { queuedStarted.countDown(); 30L },
+                    cancel = { cancelled.incrementAndGet() },
+                )
+                delivered++
+            }
+            assertFalse(queuedStarted.await(100, java.util.concurrent.TimeUnit.MILLISECONDS))
+            queued.cancel()
+            assertEquals(3, cancelled.get())
+            release.countDown()
+            org.junit.Assert.assertTrue(exited.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            kotlinx.coroutines.withTimeout(5_000) {
+                workers.forEach { it.join() }
+                queued.join()
+                assertEquals(40L, EndpointProbeRunner.awaitNativeProbe({ 40L }, {}))
+            }
+            assertEquals(1L, queuedStarted.count)
+            assertEquals(0, delivered)
+        } finally {
+            release.countDown()
+            workers.forEach { it.cancel() }
+        }
+    }
+
+    @Test
+    fun candidateProbeRejectsNativeResultsAfterContextInvalidation() = runBlocking {
+        val context = Fixture(this).service
+        val repository = SettingsRepository(context)
+        val candidate = hysteriaCandidate("probe")
+        val session = BackendVpnSession(
+            canConnect = true, profileCode = "auto", locationCode = "lv1", locationName = "Latvia",
+            endpointCode = candidate.code, entryHost = candidate.entryHost, entryPort = candidate.entryPort,
+            serverName = candidate.serverName, proxyType = candidate.proxyType, transport = candidate.transport,
+            transportMode = candidate.transportMode, security = candidate.security, fingerprint = null,
+            requestHost = null, path = null, alpn = null, allowInsecure = false, enableMux = false,
+            randomUserAgent = false, publicKey = null, shortId = null, vpnUsername = "test",
+            vpnSecret = "test-secret", flow = null, planCode = null, endpointCandidates = listOf(candidate),
+        )
+        for (change in listOf("cancel", "generation", "network", "logout", "native-cancel", "api-down", "valid")) {
+            val settings = repository.updateSettings {
+                it.copy(isAuthenticated = true, backendAccessToken = "probe-token-$change",
+                    advancedSettings = it.advancedSettings.copy(endpointSelectionMode = EndpointSelectionMode.AUTO,
+                        anonymousLogsEnabled = true, connectionLogsEnabled = true))
+            }
+            var generation = 1L
+            var network = "network-a"
+            var uploads = 0
+            val before = repository.loadEndpointHealth(EndpointRankingPolicy.NetworkKind.WIFI)
+            lateinit var job: kotlinx.coroutines.Job
+            val runner = EndpointProbeRunner(
+                context = context,
+                repository = repository,
+                endpointHealthReporter = com.noki.vpn.data.EndpointHealthEventReporter(
+                    store = repository, upload = { _, _ -> uploads++ }, loadSettings = repository::load),
+                measureTcpDelay = { host, _, _ ->
+                    if (change == "api-down" && host == com.noki.vpn.data.NokiBackendConfig.backendProbeHost) null else 10
+                },
+                measureNativeDelay = { _, _ ->
+                    when (change) {
+                        "cancel" -> job.cancel()
+                        "generation" -> generation++
+                        "network" -> network = "network-b"
+                        "logout" -> repository.clearAuthAndStageRefreshToken()
+                        "native-cancel" -> throw kotlinx.coroutines.CancellationException("native cancelled")
+                    }
+                    20L
+                },
+            )
+            job = kotlinx.coroutines.CoroutineScope(coroutineContext).launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                runner.probeAutoCandidates(session, settings,
+                    isCurrent = { generation == 1L && network == "network-a" },
+                    networkKind = EndpointRankingPolicy.NetworkKind.WIFI)
+            }
+            job.start()
+            kotlinx.coroutines.withTimeout(5_000) { job.join() }
+            val healthy = change == "valid" || change == "api-down"
+            assertEquals(change, !healthy, job.isCancelled)
+            if (healthy) {
+                assertEquals(1, uploads)
+                assertEquals((before["probe"]?.successCount ?: 0) + 1, repository.loadEndpointHealth(EndpointRankingPolicy.NetworkKind.WIFI)["probe"]?.successCount)
+            } else {
+                assertEquals(change, before, repository.loadEndpointHealth(EndpointRankingPolicy.NetworkKind.WIFI))
+                assertEquals(change, 0, uploads)
+                assertEquals(emptyList<com.noki.vpn.data.EndpointHealthEvent>(), repository.loadEndpointHealthEventQueue())
+            }
+        }
+    }
+
+    @Test
+    fun coreAssetRefreshReplacesEqualLengthDataAndPreservesOldFileOnFailure() {
+        val context = Fixture(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)).service
+        val asset = context.assets.open("geosite.dat").use { it.readBytes() }
+        val target = java.io.File(context.noBackupFilesDir, "geosite.dat")
+        target.writeBytes(ByteArray(asset.size))
+        XrayController.ensureCoreAsset(context, "geosite.dat")
+        org.junit.Assert.assertArrayEquals(asset, target.readBytes())
+        val missing = java.io.File(context.noBackupFilesDir, "missing-test.dat")
+        missing.writeText("previous valid data")
+        try {
+            XrayController.ensureCoreAsset(context, "missing-test.dat")
+            org.junit.Assert.fail("Missing bundled asset must fail")
+        } catch (_: java.io.IOException) {
+            assertEquals("previous valid data", missing.readText())
+        }
+    }
+
     @Test
     fun diagnosticQueuesAreClearedOnOptOutAndLogoutWithoutDeletingLocalLogs() = runBlocking {
         val repository = SettingsRepository(Fixture(this).service)
@@ -156,13 +325,14 @@ class AppVpnServiceCommandTest {
     @Test
     fun transientPreparationFailuresKeepRecoveryAliveAndBackOff() = runBlocking {
         val fixture = Fixture(this)
+        fixture.setNetworkAvailability(UnderlyingNetworkAvailability.Validated)
         fixture.useOfflinePreparation()
         fixture.orchestrator.updateState(VpnConnectionState.CONNECTING)
         fixture.prepareFailure(java.io.IOException("network lost"))
         repeat(3) { attempt ->
             if (attempt > 0) {
                 shadowOf(Looper.getMainLooper()).idleFor(
-                    java.time.Duration.ofMillis(ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt - 1)),
+                    java.time.Duration.ofMillis(ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt - 1, jitterFraction = 1.0)),
                 )
                 fixture.orchestrator.activeTransitionJob()!!.join()
             }
@@ -183,6 +353,64 @@ class AppVpnServiceCommandTest {
     }
 
     @Test
+    fun offlineRecoveryWaitsForValidationThenResumesOnlyOnce() = runBlocking {
+        for (killSwitch in listOf(false, true)) {
+            val fixture = Fixture(this)
+            fixture.useOfflinePreparation()
+            if (killSwitch) fixture.enableKillSwitch()
+            fixture.setNetworkAvailability(UnderlyingNetworkAvailability.None)
+            fixture.orchestrator.updateState(VpnConnectionState.CONNECTING)
+            fixture.prepareFailure(java.io.IOException("offline"))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofHours(1))
+            val attempt = fixture.recoveryAttempt()
+            assertNull(fixture.orchestrator.activeTransitionJob())
+            org.junit.Assert.assertNotNull(fixture.pendingNetworkRecovery())
+            assertEquals(killSwitch, fixture.orchestrator.currentTunnel() != null)
+            assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+            fixture.observeNetwork(UnderlyingNetworkAvailability.Unvalidated)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofHours(1))
+            assertEquals(attempt, fixture.recoveryAttempt())
+            assertNull(fixture.orchestrator.activeTransitionJob())
+            fixture.observeNetwork(UnderlyingNetworkAvailability.Validated)
+            val recoveryJob = checkNotNull(fixture.orchestrator.activeTransitionJob())
+            fixture.observeNetwork(UnderlyingNetworkAvailability.Validated)
+            assertEquals(recoveryJob, fixture.orchestrator.activeTransitionJob())
+            recoveryJob.join()
+            assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+            assertNull(fixture.pendingNetworkRecovery())
+            fixture.stop(1)
+            fixture.orchestrator.activeTransitionJob()!!.join()
+        }
+    }
+
+    @Test
+    fun stoppedOrSupersededOfflineRecoveryCannotRestartOnNetworkReturn() = runBlocking {
+        for (invalidation in listOf("stop", "generation", "logout")) {
+            val fixture = Fixture(this)
+            fixture.useOfflinePreparation()
+            fixture.setNetworkAvailability(UnderlyingNetworkAvailability.None)
+            fixture.orchestrator.updateState(VpnConnectionState.CONNECTING)
+            fixture.prepareFailure(java.io.IOException("offline"))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(6))
+            org.junit.Assert.assertNotNull(fixture.pendingNetworkRecovery())
+            when (invalidation) {
+                "stop" -> {
+                    fixture.stop(1)
+                    fixture.orchestrator.activeTransitionJob()!!.join()
+                }
+                "generation" -> fixture.orchestrator.beginTransition()
+                "logout" -> fixture.clearStoredAuth()
+            }
+            val attempts = fixture.recoveryAttempt()
+            fixture.observeNetwork(UnderlyingNetworkAvailability.Validated)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(6))
+            assertNull(invalidation, fixture.orchestrator.activeTransitionJob())
+            assertNull(invalidation, fixture.pendingNetworkRecovery())
+            assertEquals(invalidation, attempts, fixture.recoveryAttempt())
+        }
+    }
+
+    @Test
     fun permanentPreparationFailureStopsRecovery() = runBlocking {
         val fixture = Fixture(this)
         fixture.set("transientRecoveryAttempt", 2)
@@ -191,6 +419,27 @@ class AppVpnServiceCommandTest {
         org.junit.Assert.assertTrue(shadowOf(fixture.service).isStoppedBySelf)
         assertEquals(0, fixture.recoveryAttempt())
         assertNull(fixture.orchestrator.currentTunnel())
+    }
+
+    @Test
+    fun permanentPreparationFailureKeepsKillSwitchWithoutRetry() = runBlocking {
+        for (destructive in listOf(false, true)) {
+            val fixture = Fixture(this)
+            fixture.useOfflinePreparation()
+            fixture.enableKillSwitch()
+            fixture.orchestrator.updateState(VpnConnectionState.FAILED)
+            val tunnel = fixture.orchestrator.currentTunnel()
+            fixture.prepareFailure(IllegalStateException("auth_required"), destructive)
+            fixture.observeNetwork(UnderlyingNetworkAvailability.Validated)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofHours(1))
+            assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+            assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+            assertNull(fixture.orchestrator.activeTransitionJob())
+            assertNull(fixture.pendingNetworkRecovery())
+            assertEquals(0, fixture.recoveryAttempt())
+            fixture.stop(1)
+            fixture.orchestrator.activeTransitionJob()!!.join()
+        }
     }
 
     @Test
@@ -219,12 +468,48 @@ class AppVpnServiceCommandTest {
     }
 
     @Test
+    fun losingValidatedUnderlayStopsReportingConnectedAndPreservesRecovery() = runBlocking {
+        for (killSwitch in listOf(false, true)) {
+            val fixture = Fixture(this)
+            if (killSwitch) fixture.enableKillSwitch()
+            val tunnel = fixture.orchestrator.currentTunnel()
+            fixture.observeNetwork(UnderlyingNetworkAvailability.None)
+            fixture.orchestrator.activeTransitionJob()?.join()
+            assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+            if (killSwitch) assertEquals(tunnel, fixture.orchestrator.currentTunnel())
+            else assertNull(fixture.orchestrator.currentTunnel())
+            assertFalse(shadowOf(fixture.service).isStoppedBySelf)
+            fixture.stop(1)
+            fixture.orchestrator.activeTransitionJob()!!.join()
+            fixture.observeNetwork(UnderlyingNetworkAvailability.Validated)
+            assertEquals(VpnConnectionState.DISCONNECTED, fixture.orchestrator.currentState())
+        }
+    }
+
+    @Test
+    fun healthyReplacementReportsConnectingUntilReadinessIsProven() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = "tcp1")
+        fixture.startPrepared()
+        var observed = false
+        fixture.onProbe = {
+            observed = true
+            assertEquals(VpnConnectionState.CONNECTING, fixture.orchestrator.currentState())
+        }
+        org.junit.Assert.assertTrue(fixture.replaceConnected())
+        org.junit.Assert.assertTrue(observed)
+        assertEquals(VpnConnectionState.CONNECTED, fixture.orchestrator.currentState())
+        fixture.stop(1)
+        fixture.orchestrator.activeTransitionJob()!!.join()
+    }
+
+    @Test
     fun failedReplacementThenBackendTimeoutReportsFailureAndKeepsRetry() = runBlocking {
         val fixture = Fixture(this, probeFallback = true, workingEndpoint = "tcp1")
         fixture.startPrepared()
         fixture.workingEndpoint = null
         assertFalse(fixture.replaceConnected())
         assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        fixture.setNetworkAvailability(UnderlyingNetworkAvailability.Validated)
         fixture.useOfflinePreparation()
         fixture.prepareFailure(java.io.IOException("backend timeout"), destructive = false)
         fixture.invoke("broadcastCurrentState")
@@ -233,7 +518,7 @@ class AppVpnServiceCommandTest {
         assertEquals(1, fixture.recoveryAttempt())
         assertNull(fixture.orchestrator.currentTunnel())
         shadowOf(Looper.getMainLooper()).idleFor(
-            java.time.Duration.ofMillis(ConnectedWatchdogPolicy.transientRetryDelayMillis(0)),
+            java.time.Duration.ofMillis(ConnectedWatchdogPolicy.transientRetryDelayMillis(0, jitterFraction = 1.0)),
         )
         fixture.orchestrator.activeTransitionJob()!!.join()
         assertEquals(2, fixture.recoveryAttempt())
@@ -522,6 +807,41 @@ class AppVpnServiceCommandTest {
 
         fun recoveryAttempt(): Int = AppVpnService::class.java.getDeclaredField("transientRecoveryAttempt")
             .apply { isAccessible = true }.getInt(service)
+
+        fun pendingNetworkRecovery(): Any? = AppVpnService::class.java.getDeclaredField("pendingNetworkRecovery")
+            .apply { isAccessible = true }.get(service)
+
+        fun clearStoredAuth() {
+            store.updateSettings { it.copy(isAuthenticated = false, backendAccessToken = null, backendRefreshToken = null) }
+        }
+
+        fun setNetworkAvailability(availability: UnderlyingNetworkAvailability) {
+            val manager = service.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val shadow = shadowOf(manager)
+            shadow.clearAllNetworks()
+            if (availability == UnderlyingNetworkAvailability.None) return
+            val network = org.robolectric.shadows.ShadowNetwork.newInstance(101)
+            val info = org.robolectric.shadows.ShadowNetworkInfo.newInstance(
+                android.net.NetworkInfo.DetailedState.CONNECTED, android.net.ConnectivityManager.TYPE_WIFI,
+                0, true, true,
+            )
+            val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+            shadowOf(capabilities).apply {
+                addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+                if (availability == UnderlyingNetworkAvailability.Validated) {
+                    addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                }
+            }
+            shadow.addNetwork(network, info)
+            shadow.setNetworkCapabilities(network, capabilities)
+        }
+
+        fun observeNetwork(availability: UnderlyingNetworkAvailability) {
+            setNetworkAvailability(availability)
+            invoke("handleUnderlyingNetworkObservation", AndroidUnderlyingNetworkSource(service).currentObservation())
+        }
 
         fun savedSettings(): StoredSettings = store.load()
 

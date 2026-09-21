@@ -106,6 +106,7 @@ class AppVpnService : VpnService() {
     private val temporaryLeaseExpiryOwner = Any()
     private val transientRecoveryOwner = Any()
     @Volatile private var transientRecoveryAttempt = 0
+    @Volatile private var pendingNetworkRecovery: (() -> Unit)? = null
     private val lockdownRecoveryTask = {
         if (currentState == VpnConnectionState.FAILED && tunnel != null) {
             reconnectFailedClosedVpn(allowCachedFallback = true)
@@ -656,7 +657,7 @@ class AppVpnService : VpnService() {
                 failClosedAfterReplacementFailure(repository, repository.load(), reason)
                 return
             }
-            failStart(repository, reason, error)
+            failStart(repository, reason, error, retryBlockedTunnel = false)
             return
         }
         repository.recordAppLog(
@@ -672,6 +673,10 @@ class AppVpnService : VpnService() {
             broadcastState(VpnConnectionState.CONNECTED)
             updateActiveNotification()
         } else if (currentState == VpnConnectionState.FAILED && tunnel != null) {
+            if (error != null && !BackendRetryPolicy.isTransient(error)) {
+                failStart(repository, reason, error, retryBlockedTunnel = false)
+                return
+            }
             if (error != null && BackendRetryPolicy.isTransient(error)) {
                 failClosedAfterReplacementFailure(repository, activeSettings ?: repository.load(), reason)
                 return
@@ -767,6 +772,7 @@ class AppVpnService : VpnService() {
     }
 
     private fun cancelDelayedVpnCallbacks() {
+        pendingNetworkRecovery = null
         delayedTaskScheduler.cancel(selectionReprepareOwner)
         delayedTaskScheduler.cancel(runtimeDomainReapplyOwner)
         delayedTaskScheduler.cancel(lockdownRecoveryOwner)
@@ -783,7 +789,7 @@ class AppVpnService : VpnService() {
     ) {
         val attempt = transientRecoveryAttempt
         val delayMillis = ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt)
-        transientRecoveryAttempt += 1
+        transientRecoveryAttempt = (attempt + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         repository.recordAppLog(
             category = "vpn",
             message = "control_plane_retry_scheduled",
@@ -794,7 +800,7 @@ class AppVpnService : VpnService() {
             serverCountry = notificationServerLabel,
             connectionSuccess = false,
         )
-        delayedTaskScheduler.schedule(transientRecoveryOwner, delayMillis) {
+        scheduleAccountRecovery(transientRecoveryOwner, delayMillis) {
             val startDecision = ConnectedWatchdogPolicy.transientStartDecision(attempt)
             when {
                 currentRuntimeMode == VpnRuntimeMode.AUTH_TEMP -> Unit
@@ -813,7 +819,31 @@ class AppVpnService : VpnService() {
         }
     }
 
+    private fun scheduleAccountRecovery(owner: Any, delayMillis: Long, task: () -> Unit) {
+        val generationId = connectionOrchestrator.currentGenerationId()
+        val authSession = settingsStore.load()
+        delayedTaskScheduler.cancel(transientRecoveryOwner)
+        delayedTaskScheduler.cancel(lockdownRecoveryOwner)
+        pendingNetworkRecovery = null
+        // Lockdown sidecars have been paused; keep observing the physical network.
+        startNetworkChangeMonitor(activeEndpointNetworkKind)
+        fun resume() {
+            pendingNetworkRecovery = null
+            if (!connectionOrchestrator.isCurrent(generationId) ||
+                currentRuntimeMode == VpnRuntimeMode.AUTH_TEMP ||
+                !settingsStore.load().hasSameAuthSessionAs(authSession)
+            ) return
+            if (underlyingNetworkSource.currentSnapshot() == null) {
+                pendingNetworkRecovery = ::resume
+                return
+            }
+            task()
+        }
+        delayedTaskScheduler.schedule(owner, delayMillis, ::resume)
+    }
+
     private fun resetTransientRecovery() {
+        pendingNetworkRecovery = null
         delayedTaskScheduler.cancel(transientRecoveryOwner)
         transientRecoveryAttempt = 0
     }
@@ -1394,7 +1424,7 @@ class AppVpnService : VpnService() {
             settings.advancedSettings,
         )
 
-        broadcastState(VpnConnectionState.FAILED, "runtime_replacement_in_progress")
+        broadcastState(VpnConnectionState.CONNECTING, "runtime_replacement_in_progress")
         startForeground(
             NOTIFICATION_ID,
             createNotification(
@@ -1459,6 +1489,10 @@ class AppVpnService : VpnService() {
         )
 
         if (!rollbackOnFailure) {
+            broadcastState(
+                VpnConnectionState.FAILED,
+                checkNotNull(VpnReadinessPolicy.failureReason(nextStarted, nextReadiness)).code,
+            )
             connectionOrchestrator.stopXray()
             warmupController.clear()
             activeEndpointNetworkKind = previousNetworkKind
@@ -1819,10 +1853,10 @@ class AppVpnService : VpnService() {
     private fun enterTruthfulLockdownFailure(
         repository: SettingsRepository,
         reason: String,
-        retryDelayMillis: Long = watchdogController.lockdownRetryDelayMillis(),
+        retryDelayMillis: Long? = watchdogController.lockdownRetryDelayMillis(),
     ) {
         connectionOrchestrator.pauseConnectedSidecars()
-        lockdownRecoveryActive = true
+        lockdownRecoveryActive = retryDelayMillis != null
         repository.recordAppLog(
             category = "vpn",
             level = "error",
@@ -1837,15 +1871,21 @@ class AppVpnService : VpnService() {
             NOTIFICATION_ID,
             createNotification(
                 title = "VPN недоступен",
-                text = "Трафик VPN заблокирован. Ожидаем повторного подключения.",
+                text = if (retryDelayMillis != null) {
+                    "Трафик VPN заблокирован. Ожидаем повторного подключения."
+                } else {
+                    "VPN остановлен из-за ошибки. Трафик заблокирован до подключения или отключения."
+                },
                 showActions = true,
             ),
         )
-        delayedTaskScheduler.schedule(
-            owner = lockdownRecoveryOwner,
-            delayMillis = retryDelayMillis,
-            task = lockdownRecoveryTask,
-        )
+        if (retryDelayMillis != null) {
+            scheduleAccountRecovery(
+                owner = lockdownRecoveryOwner,
+                delayMillis = retryDelayMillis,
+                task = lockdownRecoveryTask,
+            )
+        }
     }
 
     private suspend fun measureRuntimeReadiness(recovery: Boolean): Long? {
@@ -1904,22 +1944,27 @@ class AppVpnService : VpnService() {
         repository: SettingsRepository,
         session: BackendVpnSession,
         settings: StoredSettings,
-        connectedAtSnapshot: Long?,
+        owner: RuntimeOwner,
     ): CancelableTask? {
         if (settings.advancedSettings.endpointSelectionMode != EndpointSelectionMode.AUTO) return null
         val endpointCode = settings.profile.endpointCode
+        val underlaySignature = connectionOrchestrator.currentUnderlaySignature() ?: return null
+        val networkKind = activeEndpointNetworkKind
+        val isCurrent = {
+            val snapshot = connectionOrchestrator.snapshot()
+            connectionOrchestrator.isCurrent(owner.generationId) && snapshot.owner == owner &&
+                snapshot.state == VpnConnectionState.CONNECTED &&
+                snapshot.activeSettings?.hasSameAuthSessionAs(settings) == true &&
+                snapshot.activeSettings.profile.endpointCode == endpointCode &&
+                snapshot.underlay?.signature == underlaySignature &&
+                underlyingNetworkSource.currentSnapshot()?.signature == underlaySignature
+        }
         val job = backgroundScope.launch {
-            if (currentState == VpnConnectionState.DISCONNECTED ||
-                currentState == VpnConnectionState.FAILED ||
-                connectedAtMillis != connectedAtSnapshot ||
-                settings.profile.endpointCode != endpointCode
-            ) {
-                return@launch
-            }
             EndpointProbeRunner(this@AppVpnService, repository).probeAutoCandidates(
                 session = session,
                 settings = settings,
-                networkKind = activeEndpointNetworkKind,
+                isCurrent = isCurrent,
+                networkKind = networkKind,
             )
         }
         return CancelableTask(job::cancel)
@@ -1952,7 +1997,31 @@ class AppVpnService : VpnService() {
                 connectionSuccess = false,
             )
         }
+        if (observation.availability != UnderlyingNetworkAvailability.Validated &&
+            currentRuntimeMode == VpnRuntimeMode.ACCOUNT &&
+            currentState == VpnConnectionState.CONNECTED &&
+            !connectionOrchestrator.transitionSnapshot().active
+        ) {
+            val repository = SettingsRepository(this)
+            val settings = activeSettings ?: repository.load()
+            launchConnectionTransition(repository) { generationId ->
+                connectionOrchestrator.withLifecycleLock {
+                    if (connectionOrchestrator.isCurrent(generationId) &&
+                        currentState == VpnConnectionState.CONNECTED &&
+                        underlyingNetworkSource.currentSnapshot() == null
+                    ) {
+                        failClosedAfterReplacementFailure(repository, settings, "underlay_unavailable")
+                    }
+                }
+            }
+            return
+        }
         if (observation.availability == UnderlyingNetworkAvailability.Validated) {
+            val recovery = pendingNetworkRecovery
+            if (recovery != null) {
+                recovery()
+                return
+            }
             observation.candidate?.let(::handleUnderlyingNetworkSnapshot)
         }
     }
@@ -2034,6 +2103,7 @@ class AppVpnService : VpnService() {
         error: Throwable? = null,
         category: String = "vpn",
         endpointRating: String? = null,
+        retryBlockedTunnel: Boolean = true,
     ) {
         cancelDelayedVpnCallbacks()
         recordDiagnostic(
@@ -2064,7 +2134,10 @@ class AppVpnService : VpnService() {
         warmupController.clear()
         if (tunnel != null && shouldBlockDirectTraffic()) {
             connectionOrchestrator.stopXray()
-            enterTruthfulLockdownFailure(repository, reason)
+            enterTruthfulLockdownFailure(
+                repository, reason,
+                retryDelayMillis = if (retryBlockedTunnel) watchdogController.lockdownRetryDelayMillis() else null,
+            )
             return
         }
         connectionOrchestrator.releaseResourcesWhileOwned(VpnConnectionState.FAILED)
@@ -2151,7 +2224,7 @@ class AppVpnService : VpnService() {
                     NOTIFICATION_ID,
                     createNotification(
                         title = "VPN переподключается",
-                        text = "Прямой интернет восстановлен. VPN ожидает доступную сеть.",
+                        text = "VPN ожидает доступную сеть.",
                         showActions = true,
                     ),
                 )
@@ -2221,6 +2294,7 @@ class AppVpnService : VpnService() {
                     repository = repository,
                     finalState = VpnConnectionState.DISCONNECTED,
                     stopService = false,
+                    reason = "user_stop",
                 )
             }
             if (revokeTemporaryLease) {
@@ -2238,6 +2312,7 @@ class AppVpnService : VpnService() {
         finalState: VpnConnectionState?,
         stopService: Boolean,
         removeForeground: Boolean = true,
+        reason: String? = null,
     ) {
         cancelDelayedVpnCallbacks()
         warmupController.clear()
@@ -2248,7 +2323,7 @@ class AppVpnService : VpnService() {
         connectedAtMillis = null
         repository.clearVpnRuntimeState()
         if (removeForeground) stopForeground(STOP_FOREGROUND_REMOVE)
-        finalState?.let(::broadcastState)
+        finalState?.let { broadcastState(it, reason) }
         if (stopService) stopSelf()
     }
 
@@ -2542,7 +2617,7 @@ class AppVpnService : VpnService() {
                 repository = repository,
                 session = session,
                 settings = settings,
-                connectedAtSnapshot = connectedAtMillis,
+                owner = owner,
             )
         }
     }

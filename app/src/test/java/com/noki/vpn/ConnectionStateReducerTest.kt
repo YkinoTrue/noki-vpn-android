@@ -10,6 +10,35 @@ import org.junit.Test
 
 class ConnectionStateReducerTest {
     @Test
+    fun explicitStopClearsPreviousNetworkWait() {
+        val stopped = ConnectionStateReducer.reduce(
+            current = AppUiState(connectionState = VpnConnectionState.FAILED, connectionReason = "Ожидание сети"),
+            state = VpnConnectionState.DISCONNECTED,
+            reason = ConnectionReason.Unknown("user_stop"),
+            connectedAtMillis = null, nowMillis = 1L, dailyStats = emptyList(), endpointRating = "",
+        ) as ConnectionStateReducer.Transition.Normal
+        assertEquals(VpnConnectionState.DISCONNECTED, stopped.state.connectionState)
+        assertEquals("", stopped.state.connectionReason)
+        assertEquals(null, stopped.state.inlineMessage)
+        assertEquals(ConnectionStateReducer.RuntimeAction.Clear, stopped.runtimeAction)
+    }
+
+    @Test
+    fun unavailableUnderlayExplainsNetworkWaitInBothLanguages() {
+        for ((language, label) in listOf(AppLanguage.RU to "Ожидание сети", AppLanguage.EN to "Waiting for network")) {
+            val result = ConnectionStateReducer.reduce(
+                current = AppUiState(personalizationSettings = PersonalizationSettings(language = language)),
+                state = VpnConnectionState.FAILED,
+                reason = ConnectionReason.Unknown("underlay_unavailable"),
+                connectedAtMillis = null, nowMillis = 1L, dailyStats = emptyList(), endpointRating = "",
+            ) as ConnectionStateReducer.Transition.Normal
+            assertEquals(label, result.state.connectionReason)
+            assertTrue(result.state.inlineMessage.orEmpty().isNotBlank())
+            assertTrue(!result.state.inlineMessage.orEmpty().contains("underlay_unavailable"))
+        }
+    }
+
+    @Test
     fun trafficLimitFailureRequestsTrafficLimitHandling() {
         val transition = ConnectionStateReducer.reduce(
             current = AppUiState(

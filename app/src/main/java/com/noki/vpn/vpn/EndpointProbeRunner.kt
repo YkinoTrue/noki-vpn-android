@@ -15,10 +15,21 @@ import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.EndpointSelector
 import com.noki.vpn.data.EndpointSecurityPolicy
 import com.noki.vpn.data.EndpointTransportPolicy
-import com.noki.vpn.data.NokiBackendConfig
 import com.noki.vpn.data.SettingsRepository
 import com.noki.vpn.data.StoredSettings
+import com.noki.vpn.data.hasSameAuthSessionAs
+import java.util.concurrent.atomic.AtomicReferenceArray
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.withContext
 import libv2ray.Libv2ray
 
@@ -30,7 +41,6 @@ data class EndpointProbeOutcome(
     val runtimeIssue: XrayRuntimeIssue?,
     val successfulHttpTargets: Int,
     val totalHttpTargets: Int,
-    val globalNetworkFailure: Boolean,
     val success: Boolean,
     val slow: Boolean,
 )
@@ -39,13 +49,33 @@ class EndpointProbeRunner(
     private val context: Context,
     private val repository: SettingsRepository,
     private val endpointHealthReporter: EndpointHealthEventReporter = EndpointHealthEventReporter(repository),
+    private val measureNativeDelay: suspend (String, String) -> Long = { config, url ->
+        val probe = Libv2ray.newOutboundProbe()
+        awaitNativeProbe(
+            measure = { probe.measure(config, url, 12_000L, 256L * 1024L) },
+            cancel = probe::cancel,
+        )
+    },
+    private val measureTcpDelay: (String, Int, Int) -> Int? = { host, port, timeout ->
+        DeviceLatency.measureTcpConnectMs(host, port, timeout)
+    },
 ) {
     suspend fun probeAutoCandidates(
         session: BackendVpnSession,
         settings: StoredSettings,
+        isCurrent: () -> Boolean,
         networkKind: EndpointRankingPolicy.NetworkKind = EndpointSelector.currentNetworkKind(context),
         maxCandidates: Int = DEFAULT_MAX_CANDIDATES,
+        deadlineMillis: Long = 15_000L,
+        staggerMillis: Long = 250L,
     ): List<EndpointProbeOutcome> {
+        suspend fun ensureCurrent() {
+            currentCoroutineContext().ensureActive()
+            if (!isCurrent() || !repository.load().hasSameAuthSessionAs(settings)) {
+                throw CancellationException("Candidate probe context changed")
+            }
+        }
+        ensureCurrent()
         val advancedSettings: AdvancedSettings = settings.advancedSettings
         if (advancedSettings.endpointSelectionMode != EndpointSelectionMode.AUTO) return emptyList()
         val codes = session.endpointCandidates
@@ -67,45 +97,44 @@ class EndpointProbeRunner(
         if (candidates.isEmpty()) return emptyList()
 
         return withContext(Dispatchers.IO) {
+            ensureCurrent()
             initCoreEnv()
-            val globalNetworkFailure = DeviceLatency.measureTcpConnectMs(
-                rawHost = NokiBackendConfig.backendProbeHost,
-                port = 443,
-                timeoutMs = TCP_CONNECT_TIMEOUT_MS,
-            ) == null
-            candidates.map { candidate ->
-                probeCandidate(session, candidate, globalNetworkFailure).also { outcome ->
-                    if (!outcome.globalNetworkFailure) {
-                        val success = outcome.success && !outcome.slow
-                        val health = repository.recordEndpointResult(
-                            endpointCode = outcome.endpointCode,
-                            success = success,
-                            slow = outcome.slow,
-                            latencyMs = outcome.xrayDelayMs,
-                            networkKind = networkKind,
-                        )
-                        endpointHealthReporter.recordEvent(
-                            settings = settings,
-                            event = EndpointHealthEvent(
-                                endpointCode = outcome.endpointCode,
-                                networkKind = networkKind,
-                                eventType = EndpointHealthEventType.CANDIDATE_PROBE,
-                                success = success,
-                                slow = outcome.slow,
-                                scoreBucket = EndpointHealthEvents.scoreBucket(health),
-                            ),
-                        )
-                        outcome.runtimeIssue?.let { issue ->
-                            recordRuntimeIssue(
-                                networkKind = networkKind,
-                                outcome = outcome,
-                                issue = issue,
-                                endpointCodes = codes,
-                            )
-                        }
-                    }
+            ensureCurrent()
+            collectCandidateProbes(candidates, deadlineMillis, staggerMillis) { candidate ->
+                probeCandidate(session, candidate, ::ensureCurrent)
+            }.onEach { outcome ->
+                ensureCurrent()
+                val success = outcome.success && !outcome.slow
+                val health = repository.recordEndpointResult(
+                    endpointCode = outcome.endpointCode,
+                    success = success,
+                    slow = outcome.slow,
+                    latencyMs = outcome.xrayDelayMs,
+                    networkKind = networkKind,
+                )
+                ensureCurrent()
+                endpointHealthReporter.recordEvent(
+                    settings = settings,
+                    event = EndpointHealthEvent(
+                        endpointCode = outcome.endpointCode,
+                        networkKind = networkKind,
+                        eventType = EndpointHealthEventType.CANDIDATE_PROBE,
+                        success = success,
+                        slow = outcome.slow,
+                        scoreBucket = EndpointHealthEvents.scoreBucket(health),
+                    ),
+                )
+                ensureCurrent()
+                outcome.runtimeIssue?.let { issue ->
+                    recordRuntimeIssue(
+                        networkKind = networkKind,
+                        outcome = outcome,
+                        issue = issue,
+                        endpointCodes = codes,
+                    )
                 }
             }.also { outcomes ->
+                ensureCurrent()
                 repository.recordAppLog(
                     category = "vpn",
                     message = "endpoint_probe_complete",
@@ -124,31 +153,28 @@ class EndpointProbeRunner(
         }
     }
 
-    private fun probeCandidate(
+    private suspend fun probeCandidate(
         session: BackendVpnSession,
         candidate: BackendEndpointCandidate,
-        globalNetworkFailure: Boolean,
+        ensureCurrent: suspend () -> Unit,
     ): EndpointProbeOutcome {
+        ensureCurrent()
         val tcpPrecheckRequired = EndpointTransportPolicy.requiresTcpPrecheck(candidate)
         val tcpMs = if (tcpPrecheckRequired) {
-            DeviceLatency.measureTcpConnectMs(
-                rawHost = candidate.connectionHost(),
-                port = candidate.entryPort,
-                timeoutMs = TCP_CONNECT_TIMEOUT_MS,
-            )
+            measureTcpDelay(candidate.connectionHost(), candidate.entryPort, TCP_CONNECT_TIMEOUT_MS)
         } else {
             null
         }
+        ensureCurrent()
         if (tcpPrecheckRequired && tcpMs == null) {
             return EndpointProbeOutcome(
                 endpointCode = candidate.code,
                 tcpPrecheckRequired = true,
                 tcpConnectMs = null,
                 xrayDelayMs = null,
-                runtimeIssue = if (globalNetworkFailure) null else XrayRuntimeIssue.PROXY_TCP_TIMEOUT,
+                runtimeIssue = XrayRuntimeIssue.PROXY_TCP_TIMEOUT,
                 successfulHttpTargets = 0,
                 totalHttpTargets = VpnProbePlanPolicy.candidateTargets().size,
-                globalNetworkFailure = globalNetworkFailure,
                 success = false,
                 slow = false,
             )
@@ -158,7 +184,9 @@ class EndpointProbeRunner(
         val config = XrayConfigFactory.buildProbe(profile)
         val targetResults = mutableListOf<ActiveProbePolicy.TargetResult>()
         for (target in VpnProbePlanPolicy.candidateTargets()) {
+            ensureCurrent()
             val result = measureOutboundDelay(config, target.url)
+            ensureCurrent()
             targetResults += ActiveProbePolicy.TargetResult(
                 delayMs = result.delayMs,
                 issue = result.issue,
@@ -182,15 +210,16 @@ class EndpointProbeRunner(
             runtimeIssue = probeRuntimeIssue(targetResults, decision),
             successfulHttpTargets = targetResults.count { it.delayMs != null },
             totalHttpTargets = targetResults.size,
-            globalNetworkFailure = globalNetworkFailure,
             success = success,
             slow = slow,
         )
     }
 
-    private fun measureOutboundDelay(config: String, url: String): XrayDelayResult =
+    private suspend fun measureOutboundDelay(config: String, url: String): XrayDelayResult =
         try {
-            XrayDelayResult(delayMs = Libv2ray.measureOutboundDelay(config, url).takeIf { it > 0L })
+            XrayDelayResult(delayMs = measureNativeDelay(config, url).takeIf { it > 0L })
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
             XrayDelayResult(delayMs = null, issue = XrayRuntimeIssue.fromThrowable(error))
         }
@@ -214,7 +243,7 @@ class EndpointProbeRunner(
             category = "vpn",
             level = "error",
             message = issue.logMessage,
-            details = "source=candidate_probe; tcp_precheck=${outcome.tcpPrecheckRequired}; xray_ok=${outcome.successfulHttpTargets > 0}; global_network_fail=${outcome.globalNetworkFailure}",
+            details = "source=candidate_probe; tcp_precheck=${outcome.tcpPrecheckRequired}; xray_ok=${outcome.successfulHttpTargets > 0}",
             errorType = issue.logMessage,
             connectionSuccess = false,
             endpointRating = repository.endpointRatingSnapshot(endpointCodes, networkKind),
@@ -232,15 +261,54 @@ class EndpointProbeRunner(
             val xrayOk = outcome.successfulHttpTargets > 0
             val httpOk = outcome.success
             val issue = outcome.runtimeIssue?.logMessage?.let { ",issue=$it" }.orEmpty()
-            "${outcome.endpointCode}:tcp=$tcpState,xray_ok=$xrayOk,http_ok=$httpOk,global_network_fail=${outcome.globalNetworkFailure}$issue"
+            "${outcome.endpointCode}:tcp=$tcpState,xray_ok=$xrayOk,http_ok=$httpOk$issue"
         }.take(2048)
     }
 
-    private companion object {
-        const val TAG = "NokiEndpointProbe"
-        const val DEFAULT_MAX_CANDIDATES = 2
-        const val TCP_CONNECT_TIMEOUT_MS = 1_200
-        const val SLOW_TCP_CONNECT_MS = 900
-        const val SLOW_XRAY_DELAY_MS = 2_500L
+    companion object {
+        // The slot belongs to the blocking call, even after its awaiting coroutine is cancelled.
+        private val nativeProbeDispatcher = Dispatchers.IO.limitedParallelism(2)
+
+        internal suspend fun awaitNativeProbe(measure: () -> Long, cancel: () -> Unit): Long =
+            suspendCancellableCoroutine { continuation ->
+                continuation.invokeOnCancellation { cancel() }
+                nativeProbeDispatcher.dispatch(EmptyCoroutineContext) {
+                    if (continuation.isActive) {
+                        continuation.resumeWith(runCatching(measure))
+                    }
+                }
+            }
+
+        internal suspend fun collectCandidateProbes(
+            candidates: List<BackendEndpointCandidate>,
+            deadlineMillis: Long,
+            staggerMillis: Long,
+            probe: suspend (BackendEndpointCandidate) -> EndpointProbeOutcome,
+        ): List<EndpointProbeOutcome> {
+            require(deadlineMillis in 1L..60_000L)
+            require(staggerMillis in 0L..deadlineMillis)
+            val boundedCandidates = candidates.take(DEFAULT_MAX_CANDIDATES)
+            val completed = AtomicReferenceArray<EndpointProbeOutcome>(boundedCandidates.size)
+            withTimeoutOrNull(deadlineMillis) {
+                coroutineScope {
+                    boundedCandidates.mapIndexed { index, candidate ->
+                        async {
+                            delay(index * staggerMillis)
+                            val outcome = probe(candidate)
+                            currentCoroutineContext().ensureActive()
+                            completed.set(index, outcome)
+                        }
+                    }.awaitAll()
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            return (0 until completed.length()).mapNotNull(completed::get)
+        }
+
+        private const val TAG = "NokiEndpointProbe"
+        private const val DEFAULT_MAX_CANDIDATES = 2
+        private const val TCP_CONNECT_TIMEOUT_MS = 1_200
+        private const val SLOW_TCP_CONNECT_MS = 900
+        private const val SLOW_XRAY_DELAY_MS = 2_500L
     }
 }

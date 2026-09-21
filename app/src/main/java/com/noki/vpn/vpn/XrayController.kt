@@ -2,6 +2,7 @@ package com.noki.vpn.vpn
 
 import android.content.Context
 import android.util.Log
+import android.util.AtomicFile
 import java.io.File
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
@@ -91,15 +92,20 @@ internal class XrayController(
         }
     }
 
-    private companion object {
-        const val TAG = "NokiXrayController"
-        const val GEOSITE_ASSET = "geosite.dat"
+    companion object {
+        private const val TAG = "NokiXrayController"
+        private const val GEOSITE_ASSET = "geosite.dat"
 
-        fun ensureCoreAsset(context: Context, assetName: String) {
-            val target = File(context.noBackupFilesDir, assetName)
-            context.assets.open(assetName).use { source ->
-                if (target.isFile && target.length() == source.available().toLong()) return
-                target.outputStream().use { output -> source.copyTo(output) }
+        @Synchronized
+        internal fun ensureCoreAsset(context: Context, assetName: String) {
+            val target = AtomicFile(File(context.noBackupFilesDir, assetName))
+            val output = target.startWrite()
+            try {
+                context.assets.open(assetName).use { source -> source.copyTo(output) }
+                target.finishWrite(output)
+            } catch (error: Throwable) {
+                target.failWrite(output)
+                throw error
             }
         }
     }

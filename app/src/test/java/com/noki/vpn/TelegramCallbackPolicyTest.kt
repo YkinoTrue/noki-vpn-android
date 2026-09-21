@@ -26,12 +26,12 @@ class TelegramCallbackPolicyTest {
     fun acceptsOnlyRegisteredNativeOrBrowserCallbacks() {
         assertTrue(
             TelegramCallbackPolicy.accepts(
-                "https://app3992881250-login.tg.dev/tglogin?code=authorization-code",
+                "https://app601443831-login.tg.dev/tglogin?code=authorization-code",
             ),
         )
         assertTrue(
             TelegramCallbackPolicy.accepts(
-                "https://APP3992881250-LOGIN.TG.DEV:443/tglogin?error=access_denied",
+                "https://APP601443831-LOGIN.TG.DEV:443/tglogin?error=access_denied",
             ),
         )
         assertTrue(
@@ -44,18 +44,19 @@ class TelegramCallbackPolicyTest {
             null,
             "",
             "not a uri",
+            "https://app3992881250-login.tg.dev/tglogin?code=x",
             "tg:opaque-callback",
             "noki://evil/browser?state=x",
             "noki://telegram/other?state=x",
             "noki://user@telegram/browser?state=x",
-            "http://app3992881250-login.tg.dev/tglogin?code=x",
-            "https://evil.app3992881250-login.tg.dev/tglogin?code=x",
-            "https://app3992881250-login.tg.dev.evil.example/tglogin?code=x",
-            "https://user@app3992881250-login.tg.dev/tglogin?code=x",
-            "https://app3992881250-login.tg.dev:8443/tglogin?code=x",
-            "https://app3992881250-login.tg.dev/%74glogin?code=x",
-            "https://app3992881250-login.tg.dev/tglogin/extra?code=x",
-            "https://app3992881250-login.tg.dev/other?code=x",
+            "http://app601443831-login.tg.dev/tglogin?code=x",
+            "https://evil.app601443831-login.tg.dev/tglogin?code=x",
+            "https://app601443831-login.tg.dev.evil.example/tglogin?code=x",
+            "https://user@app601443831-login.tg.dev/tglogin?code=x",
+            "https://app601443831-login.tg.dev:8443/tglogin?code=x",
+            "https://app601443831-login.tg.dev/%74glogin?code=x",
+            "https://app601443831-login.tg.dev/tglogin/extra?code=x",
+            "https://app601443831-login.tg.dev/other?code=x",
         ).forEach { callback ->
             assertFalse("Unexpectedly accepted: $callback", TelegramCallbackPolicy.accepts(callback))
         }

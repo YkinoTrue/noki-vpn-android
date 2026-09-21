@@ -343,6 +343,7 @@ object AppErrorMapper {
             return tr(language, "Не выбраны приложения", "No apps selected")
         }
         return when (reason) {
+            "underlay_unavailable" -> tr(language, "Нет доступной сети. VPN восстановится автоматически.", "No network available. VPN will reconnect automatically.")
             "permission_denied" -> tr(language, "Разрешение VPN не выдано", "VPN permission was denied")
             "runtime_unavailable" -> tr(language, "VPN-движок недоступен", "VPN runtime is unavailable")
             "interface_error" -> tr(language, "Не удалось создать VPN-интерфейс", "Failed to create VPN interface")
@@ -371,6 +372,7 @@ object AppErrorMapper {
             return tr(language, "Не выбраны приложения", "No apps selected")
         }
         return when (reason) {
+            "underlay_unavailable" -> tr(language, "Ожидание сети", "Waiting for network")
             "permission_denied" -> tr(language, "Разрешение не выдано", "Permission denied")
             "temporary_vpn_limit" -> tr(
                 language,

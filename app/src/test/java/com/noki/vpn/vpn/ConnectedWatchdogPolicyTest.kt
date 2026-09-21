@@ -146,10 +146,15 @@ class ConnectedWatchdogPolicyTest {
 
     @Test
     fun transientControlPlaneBackoffCapsAtFiveMinutes() {
-        assertEquals(
-            listOf(15_000L, 30_000L, 60_000L, 120_000L, 300_000L, 300_000L),
-            (0..5).map(ConnectedWatchdogPolicy::transientRetryDelayMillis),
-        )
+        val ceilings = listOf(15_000L, 30_000L, 60_000L, 120_000L, 240_000L, 300_000L)
+        for ((attempt, ceiling) in ceilings.withIndex()) {
+            assertEquals(ceiling / 2, ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt, 0.0))
+            assertEquals(ceiling * 3 / 4, ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt, 0.5))
+            assertEquals(ceiling, ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt, 1.0))
+            assertTrue(ConnectedWatchdogPolicy.transientRetryDelayMillis(attempt) in ceiling / 2..ceiling)
+        }
+        assertEquals(300_000L, ConnectedWatchdogPolicy.transientRetryDelayMillis(Int.MAX_VALUE, 1.0))
+        assertEquals(7_500L, ConnectedWatchdogPolicy.transientRetryDelayMillis(Int.MIN_VALUE, 0.0))
     }
 
     @Test

@@ -71,6 +71,23 @@ object EndpointRankingPolicy {
         rotationIndex: (String) -> Int,
         excludedCodes: Set<String> = emptySet(),
     ): Selection? {
+        val ranked = rankCandidates(candidates, health, networkKind, nowMillis, excludedCodes)
+        val best = ranked.firstOrNull() ?: return null
+        val comparator = candidateSelectionComparator(health, nowMillis, networkKind)
+        val bestTier = ranked.takeWhile { comparator.compare(best, it) == 0 }
+        val endpointClass = classify(best)
+        val rotationKey = rotationKeyFor(endpointClass, bestTier)
+        val candidate = bestTier[rotationIndex(rotationKey).floorMod(bestTier.size)]
+        return Selection(candidate, endpointClass, rotationKey)
+    }
+
+    fun rankCandidates(
+        candidates: List<BackendEndpointCandidate>,
+        health: Map<String, EndpointHealth>,
+        networkKind: NetworkKind,
+        nowMillis: Long,
+        excludedCodes: Set<String> = emptySet(),
+    ): List<BackendEndpointCandidate> {
         val eligibleWithoutCooldown = eligibleCandidates(
             candidates = candidates,
             health = health,
@@ -86,68 +103,11 @@ object EndpointRankingPolicy {
                 ignoreCooldown = true,
             )
         }
-        if (eligible.isEmpty()) return null
-
-        return preferredClasses(networkKind)
-            .asSequence()
-            .mapNotNull { endpointClass ->
-                val classCandidates = eligible.filter { classify(it) == endpointClass }
-                if (classCandidates.isEmpty()) return@mapNotNull null
-
-                val minPriority = classCandidates.minOf { it.priority }
-                val sameTier = classCandidates.filter { it.priority == minPriority }
-                val rankedTier = sameTier.sortedWith(candidateSelectionComparator(health, nowMillis))
-                val best = rankedTier.first()
-                val bestHealth = health[best.code]
-                val bestScore = effectiveScore(bestHealth, nowMillis)
-                val bestLatency = freshLatency(bestHealth, nowMillis)
-                val bestWeight = best.weight
-                val bestTier = rankedTier.filter { candidate ->
-                    val candidateHealth = health[candidate.code]
-                    effectiveScore(candidateHealth, nowMillis) == bestScore &&
-                        freshLatency(candidateHealth, nowMillis) == bestLatency &&
-                        candidate.weight == bestWeight
-                }
-                val rotationKey = rotationKeyFor(endpointClass, sameTier)
-                val index = rotationIndex(rotationKey).floorMod(bestTier.size)
-                val candidate = bestTier[index]
-                Selection(
-                    candidate = candidate,
-                    endpointClass = endpointClass,
-                    rotationKey = rotationKey,
-                )
-            }
-            .firstOrNull()
-    }
-
-    fun rankCandidates(
-        candidates: List<BackendEndpointCandidate>,
-        health: Map<String, EndpointHealth>,
-        networkKind: NetworkKind,
-        nowMillis: Long,
-    ): List<BackendEndpointCandidate> {
-        val eligibleWithoutCooldown = eligibleCandidates(
-            candidates = candidates,
-            health = health,
-            nowMillis = nowMillis,
-        )
-        val eligible = eligibleWithoutCooldown.ifEmpty {
-            eligibleCandidates(
-                candidates = candidates,
-                health = health,
-                nowMillis = nowMillis,
-                ignoreCooldown = true,
-            )
-        }
         if (eligible.isEmpty()) return emptyList()
 
-        val classOrder = preferredClasses(networkKind)
-        val known = classOrder.flatMap { endpointClass ->
-            eligible
-                .filter { classify(it) == endpointClass }
-                .sortedWith(candidateSelectionComparator(health, nowMillis))
-        }
-        return known
+        val supportedClasses = preferredClasses(networkKind)
+        return eligible.filter { classify(it) in supportedClasses }
+            .sortedWith(candidateSelectionComparator(health, nowMillis, networkKind).thenBy { it.code })
     }
 
     fun selectWarmupCandidates(
@@ -271,12 +231,14 @@ object EndpointRankingPolicy {
     private fun candidateSelectionComparator(
         health: Map<String, EndpointHealth>,
         nowMillis: Long,
+        networkKind: NetworkKind,
     ): Comparator<BackendEndpointCandidate> {
-        return compareBy<BackendEndpointCandidate> { it.priority }
-            .thenByDescending { effectiveScore(health[it.code], nowMillis) }
+        val classOrder = preferredClasses(networkKind)
+        return compareByDescending<BackendEndpointCandidate> { effectiveScore(health[it.code], nowMillis) }
             .thenBy { freshLatency(health[it.code], nowMillis) ?: Long.MAX_VALUE }
+            .thenBy { classOrder.indexOf(classify(it)) }
+            .thenBy { it.priority }
             .thenByDescending { it.weight }
-            .thenBy { it.code }
     }
 
     private fun effectiveScore(

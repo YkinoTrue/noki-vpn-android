@@ -4,7 +4,7 @@ import java.net.URI
 
 internal object TelegramCallbackPolicy {
     private const val NATIVE_CALLBACK_SCHEME = "https"
-    private const val NATIVE_CALLBACK_HOST = "app3992881250-login.tg.dev"
+    private const val NATIVE_CALLBACK_HOST = "app601443831-login.tg.dev"
     private const val NATIVE_CALLBACK_PATH = "/tglogin"
     private const val BROWSER_CALLBACK_SCHEME = "noki"
     private const val BROWSER_CALLBACK_HOST = "telegram"

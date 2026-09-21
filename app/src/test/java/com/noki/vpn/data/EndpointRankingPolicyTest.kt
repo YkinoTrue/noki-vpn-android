@@ -123,7 +123,7 @@ class EndpointRankingPolicyTest {
     }
 
     @Test
-    fun wifiClassOrderRemainsStrongerThanCrossClassScore() {
+    fun measuredHealthOverridesWifiClassOrder() {
         val selected = EndpointRankingPolicy.select(
             candidates = listOf(
                 tcpCandidate("tcp"),
@@ -142,11 +142,11 @@ class EndpointRankingPolicyTest {
             rotationIndex = { 0 },
         )
 
-        assertEquals("tcp", selected?.candidate?.code)
+        assertEquals("xhttp", selected?.candidate?.code)
     }
 
     @Test
-    fun cellularHysteriaRemainsBehindRealityFallback() {
+    fun measuredHysteriaCanBeatRealityOnCellular() {
         val selected = EndpointRankingPolicy.select(
             candidates = listOf(tcpCandidate("tcp"), hysteriaCandidate("hy2")),
             health = mapOf(
@@ -158,7 +158,42 @@ class EndpointRankingPolicyTest {
             rotationIndex = { 0 },
         )
 
-        assertEquals("tcp", selected?.candidate?.code)
+        assertEquals("hy2", selected?.candidate?.code)
+    }
+
+    @Test
+    fun freshMeasurementsOutrankStaticClassAndPriorityInBothSelectionPaths() {
+        val now = 10_000L
+        val candidates = listOf(tcpCandidate("tcp").copy(priority = 1), hysteriaCandidate("hy2").copy(priority = 999))
+        val health = mapOf(
+            "tcp" to EndpointHealth(score = 90, latencyEwmaMs = 2_000, latencyUpdatedAtMillis = now),
+            "hy2" to EndpointHealth(score = 90, latencyEwmaMs = 100, latencyUpdatedAtMillis = now),
+        )
+        for (network in EndpointRankingPolicy.NetworkKind.entries) {
+            val ranked = EndpointRankingPolicy.rankCandidates(candidates, health, network, now)
+            val selected = EndpointRankingPolicy.select(candidates, health, network, now, { 0 })
+            assertEquals(listOf("hy2", "tcp"), ranked.map { it.code })
+            assertEquals(ranked.first(), selected?.candidate)
+        }
+    }
+
+    @Test
+    fun expiredEvidenceReturnsToStaticBootstrapAndCannotBypassEligibility() {
+        val now = 10 * 24 * 60 * 60 * 1_000L
+        val tcp = tcpCandidate("tcp")
+        val hy2 = hysteriaCandidate("hy2")
+        val oldHealth = mapOf("hy2" to EndpointHealth(score = 100, lastUpdatedAtMillis = 1,
+            latencyEwmaMs = 1, latencyUpdatedAtMillis = 1))
+        assertEquals("tcp", EndpointRankingPolicy.select(
+            listOf(hy2, tcp), oldHealth, EndpointRankingPolicy.NetworkKind.WIFI, now, { 0 },
+        )?.candidate?.code)
+        val candidates = listOf(tcp, hy2, hy2.copy(code = "canary", canaryOnly = true),
+            hy2.copy(code = "blank", entryHost = ""), hy2.copy(code = "excluded"))
+        val health = candidates.associate { it.code to EndpointHealth(score = 100, lastUpdatedAtMillis = now) } +
+            ("hy2" to EndpointHealth(score = 100, cooldownUntilMillis = now + 1))
+        assertEquals(listOf("tcp"), EndpointRankingPolicy.rankCandidates(
+            candidates, health, EndpointRankingPolicy.NetworkKind.WIFI, now, excludedCodes = setOf("excluded"),
+        ).map { it.code })
     }
 
     @Test

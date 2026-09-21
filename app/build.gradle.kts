@@ -38,9 +38,9 @@ val googleWebClientId = providers.gradleProperty("noki.googleWebClientId")
     .orElse("")
     .get()
 val libv2rayAarFile = layout.projectDirectory.file("libs/libv2ray.aar")
-val libv2rayAarSha256 = "CF1D829174C12CD4781725DDDF30347A9231014F18684619208521EBD5B020D4"
-val expectedReleaseVersionCode = 242
-val expectedReleaseVersionName = "1.1.1"
+val libv2rayAarSha256 = "7448EE8CCE680872E906F9BDA78DEB37320CACD4C03AF086B11B8F94CAC70EC6"
+val expectedReleaseVersionCode = 243
+val expectedReleaseVersionName = "1.1.2"
 
 fun String.toBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -77,7 +77,7 @@ android {
         buildConfigField(
             "String",
             "TELEGRAM_LOGIN_REDIRECT_URI",
-            "https://app3992881250-login.tg.dev/tglogin".toBuildConfigString(),
+            "https://app601443831-login.tg.dev/tglogin".toBuildConfigString(),
         )
         buildConfigField(
             "String",

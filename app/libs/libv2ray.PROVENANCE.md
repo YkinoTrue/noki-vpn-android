@@ -10,15 +10,19 @@ built from the 2dust AndroidLibXrayLite wrapper project.
 - Local patch: `libv2ray-v26.6.2-cancellable.patch`
 - Patch purpose: caller-bounded, explicitly cancellable `MeasureDelay` with
   generation-safe active-measurement ownership and cancellation before core
-  shutdown.
+  shutdown. One-shot `OutboundProbe` exposes per-candidate cancellation without
+  affecting the connected controller or another candidate. HTTP measurements read
+  complete response bodies with a shared 256 KiB default body-read budget and a
+  12-second total deadline; TLS verification remains enabled. Body-read budgets
+  do not include transport overhead or socket read-ahead.
 - Build command:
   `gomobile bind -target=android -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' -o libv2ray.aar ./`
 - Build toolchain: Go `1.26.3`, `golang.org/x/mobile`
   `v0.0.0-20260529142300-ecb4cd65260a`, Android NDK
   `29.0.14206865`.
-- Size: `55897377` bytes
-- SHA-256: `CF1D829174C12CD4781725DDDF30347A9231014F18684619208521EBD5B020D4`
-- Local build timestamp: `2026-07-30`
+- Size: `55908882` bytes
+- SHA-256: `7448EE8CCE680872E906F9BDA78DEB37320CACD4C03AF086B11B8F94CAC70EC6`
+- Local build timestamp: `2026-09-21`
 - Archive entries include `classes.jar`, `proguard.txt`, geo assets, and JNI
   libraries for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
 - Bundled `proguard.txt` keeps `go.**` and `libv2ray.**`.
@@ -45,3 +49,10 @@ Source status:
 - Do not replace this file with unrelated third-party AARs. For future updates,
   use a pinned AndroidLibXrayLite release or migrate deliberately to
   XTLS/libXray with controller/probe adapter changes.
+
+Validation for the current patch:
+
+- Nine native host tests passed, including real-core TLS body stalls after 16 KiB,
+  complete-body reads, response budgets, cancellation and isolated concurrent probes.
+- Four Android ABIs built successfully; Java signatures verified with `javap`.
+- Android device/JNI execution has not yet been validated.

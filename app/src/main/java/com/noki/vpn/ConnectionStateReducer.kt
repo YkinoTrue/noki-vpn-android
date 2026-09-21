@@ -99,7 +99,9 @@ internal object ConnectionStateReducer {
         val nextState = current.copy(
             connectionState = state,
             connectedAtMillis = nextConnectedAtMillis,
-            connectionReason = AppErrorMapper.localizeConnectionReason(language, rawReason),
+            connectionReason = if (state == VpnConnectionState.DISCONNECTED) "" else {
+                AppErrorMapper.localizeConnectionReason(language, rawReason)
+            },
             inlineMessage = inlineMessage(language, state, rawReason),
             dailyStats = dailyStats,
         )

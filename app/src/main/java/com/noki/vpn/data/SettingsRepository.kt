@@ -201,6 +201,13 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         connectionSuccess: Boolean? = null,
         endpointRating: String? = null,
     ) {
+        if (com.noki.vpn.BuildConfig.DIAGNOSTIC_LOGGING) {
+            // Only structured event codes; never emit details, credentials or destinations.
+            val eventCode = message.takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,95}")) }
+            if (eventCode != null) {
+                android.util.Log.i("NokiDiagnostic", "event=$eventCode; api_ms=${apiResponseTimeMs ?: -1}")
+            }
+        }
         if (!AppDiagnosticLogPolicy.shouldStoreAppLog(load().advancedSettings)) return
         synchronized(LOGS_LOCK) {
             val logs = loadAppLogsLocked().toMutableList()

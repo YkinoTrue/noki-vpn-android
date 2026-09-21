@@ -66,12 +66,14 @@ object ConnectedWatchdogPolicy {
         else -> PreparationFailureDecision.PermanentFailure
     }
 
-    fun transientRetryDelayMillis(attempt: Int): Long = when (attempt.coerceAtLeast(0)) {
-        0 -> 15_000L
-        1 -> 30_000L
-        2 -> 60_000L
-        3 -> 120_000L
-        else -> 300_000L
+    fun transientRetryDelayMillis(
+        attempt: Int,
+        jitterFraction: Double = kotlin.random.Random.nextDouble(),
+    ): Long {
+        require(jitterFraction in 0.0..1.0)
+        val ceiling = (15_000L shl attempt.coerceIn(0, 5)).coerceAtMost(300_000L)
+        // Equal jitter keeps a nonzero delay even during a widespread outage.
+        return ceiling / 2 + (ceiling / 2 * jitterFraction).toLong()
     }
 
     fun transientStartDecision(attempt: Int): VpnPreparationStrategy =
