@@ -237,6 +237,31 @@ class EndpointRankingPolicyTest {
     }
 
     @Test
+    fun newSampleDoesNotReviveExpiredOrFutureLatencyHistory() {
+        val now = 24 * 60 * 60 * 1_000L
+        for (oldTimestamp in listOf(1L, now + 1L)) {
+            val recovered = EndpointRankingPolicy.updateAfterResult(
+                previous = EndpointHealth(score = 100, latencyEwmaMs = 4_000L,
+                    latencyUpdatedAtMillis = oldTimestamp),
+                success = true,
+                nowMillis = now,
+                latencyMs = 100L,
+            )
+            assertEquals(100L, recovered.latencyEwmaMs)
+            assertEquals(now, recovered.latencyUpdatedAtMillis)
+            assertEquals("recovered", EndpointRankingPolicy.select(
+                candidates = listOf(tcpCandidate("other"), tcpCandidate("recovered")),
+                health = mapOf("recovered" to recovered,
+                    "other" to EndpointHealth(score = 100, latencyEwmaMs = 200L,
+                        latencyUpdatedAtMillis = now)),
+                networkKind = EndpointRankingPolicy.NetworkKind.WIFI,
+                nowMillis = now,
+                rotationIndex = { 0 },
+            )?.candidate?.code)
+        }
+    }
+
+    @Test
     fun freshLowerLatencyBreaksEqualScoreTie() {
         val selected = EndpointRankingPolicy.select(
             candidates = listOf(tcpCandidate("slow"), tcpCandidate("fast")),

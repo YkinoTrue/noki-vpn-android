@@ -153,7 +153,7 @@ object EndpointRankingPolicy {
         val shouldCooldown = !success
         val normalizedLatency = latencyMs?.takeIf { success && it > 0L }
         val nextLatency = normalizedLatency?.let { sample ->
-            previous.latencyEwmaMs?.let { old -> ((old * 3L) + sample) / 4L } ?: sample
+            freshLatency(previous, nowMillis)?.let { old -> ((old * 3L) + sample) / 4L } ?: sample
         } ?: previous.latencyEwmaMs
         return previous.copy(
             score = nextScore,
