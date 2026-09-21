@@ -51,6 +51,47 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 class AppVpnServiceCommandTest {
     @Test
+    fun candidateWarmupRespectsProtocolAndManualSelection() = runBlocking {
+        val context = Fixture(this).service
+        val repository = SettingsRepository(context)
+        val candidate = hysteriaCandidate("tls")
+        val session = BackendVpnSession(
+            canConnect = true, profileCode = "auto", locationCode = "lv1", locationName = "Latvia",
+            endpointCode = candidate.code, entryHost = candidate.entryHost, entryPort = candidate.entryPort,
+            serverName = candidate.serverName, proxyType = candidate.proxyType, transport = candidate.transport,
+            transportMode = candidate.transportMode, security = candidate.security, fingerprint = null,
+            requestHost = null, path = null, alpn = null, allowInsecure = false, enableMux = false,
+            randomUserAgent = false, publicKey = null, shortId = null, vpnUsername = "test",
+            vpnSecret = "test-secret", flow = null, planCode = null,
+            endpointCandidates = listOf(candidate, tcpCandidate("reality")),
+        )
+        for (mode in EndpointSelectionMode.entries) {
+            for (protocol in com.noki.vpn.data.VpnProtocol.entries) {
+                val settings = repository.updateSettings {
+                    it.copy(isAuthenticated = true, backendAccessToken = "probe-token",
+                        advancedSettings = it.advancedSettings.copy(
+                            endpointSelectionMode = mode, protocol = protocol))
+                }
+                val calls = java.util.concurrent.atomic.AtomicInteger()
+                val runner = EndpointProbeRunner(
+                    context = context, repository = repository,
+                    measureTcpDelay = { _, _, _ -> 10 },
+                    measureNativeDelay = { _, _ -> calls.incrementAndGet(); 20L },
+                )
+                val outcomes = runner.probeAutoCandidates(session, settings, isCurrent = { true },
+                    networkKind = EndpointRankingPolicy.NetworkKind.WIFI, staggerMillis = 0L)
+                val expected = if (mode == EndpointSelectionMode.MANUAL) emptySet() else when (protocol) {
+                    com.noki.vpn.data.VpnProtocol.AUTO -> setOf("tls", "reality")
+                    com.noki.vpn.data.VpnProtocol.TLS -> setOf("tls")
+                    com.noki.vpn.data.VpnProtocol.REALITY -> setOf("reality")
+                }
+                assertEquals("$mode/$protocol", expected, outcomes.map { it.endpointCode }.toSet())
+                assertEquals(expected.size, calls.get())
+            }
+        }
+    }
+
+    @Test
     fun candidateDeadlineRetainsCompletedAlternativeAndCancelsStalledProbe() = runBlocking {
         val started = mutableListOf<String>()
         val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()

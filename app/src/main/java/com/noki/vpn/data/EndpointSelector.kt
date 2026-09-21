@@ -90,14 +90,7 @@ object EndpointSelector {
             .filter { it.entryHost.isNotBlank() }
         val secure = withHost
             .filter(EndpointSecurityPolicy::isAllowedCandidate)
-        val matchingProtocol = secure
-            .filter { candidate ->
-                when (settings.protocol) {
-                    VpnProtocol.AUTO -> true
-                    VpnProtocol.TLS -> candidate.security.equals("tls", ignoreCase = true)
-                    VpnProtocol.REALITY -> candidate.security.equals("reality", ignoreCase = true)
-                }
-            }
+        val matchingProtocol = secure.filter { matchesProtocol(it, settings.protocol) }
         val candidates = matchingProtocol.filter { !it.canaryOnly }
         onDiagnostic("stage=candidates; received=${session.endpointCandidates.size}; with_host=${withHost.size}; security_allowed=${secure.size}; protocol_allowed=${matchingProtocol.size}; eligible=${candidates.size}; protocol=${settings.protocol}; mode=${settings.endpointSelectionMode}")
         if (candidates.isEmpty()) return null
@@ -156,6 +149,13 @@ object EndpointSelector {
             rotationIndex = rotationIndex,
         )?.candidate, networkKind = network)
     }
+
+    internal fun matchesProtocol(candidate: BackendEndpointCandidate, protocol: VpnProtocol): Boolean =
+        when (protocol) {
+            VpnProtocol.AUTO -> true
+            VpnProtocol.TLS -> candidate.security.equals("tls", ignoreCase = true)
+            VpnProtocol.REALITY -> candidate.security.equals("reality", ignoreCase = true)
+        }
 
     fun currentNetworkKind(context: Context): EndpointRankingPolicy.NetworkKind {
         return currentUnderlyingNetworkKind(context)

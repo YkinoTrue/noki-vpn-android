@@ -78,13 +78,15 @@ class EndpointProbeRunner(
         ensureCurrent()
         val advancedSettings: AdvancedSettings = settings.advancedSettings
         if (advancedSettings.endpointSelectionMode != EndpointSelectionMode.AUTO) return emptyList()
-        val codes = session.endpointCandidates
+        val matchingProtocol = session.endpointCandidates
+            .filter { EndpointSelector.matchesProtocol(it, advancedSettings.protocol) }
+        val codes = matchingProtocol
             .filter { !it.canaryOnly }
             .filter(EndpointSecurityPolicy::isAllowedCandidate)
             .map { it.code }
         val health = repository.loadEndpointHealth(networkKind)
         val rankedCandidates = EndpointRankingPolicy.rankCandidates(
-            candidates = session.endpointCandidates,
+            candidates = matchingProtocol,
             health = health,
             networkKind = networkKind,
             nowMillis = System.currentTimeMillis(),
