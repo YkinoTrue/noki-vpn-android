@@ -1,0 +1,561 @@
+diff --git a/libv2ray_main.go b/libv2ray_main.go
+index 83b876f..aadc0d3 100644
+--- a/libv2ray_main.go
++++ b/libv2ray_main.go
+@@ -1,6 +1,7 @@
+ package libv2ray
+ 
+ import (
++	"context"
+ 	"fmt"
+ 	"io"
+ 	"log"
+@@ -33,11 +34,15 @@ const (
+ 
+ // CoreController represents a controller for managing Xray core instance lifecycle
+ type CoreController struct {
+-	CallbackHandler CoreCallbackHandler
+-	statsManager    corestats.Manager
+-	coreMutex       sync.Mutex
+-	coreInstance    *core.Instance
+-	IsRunning       bool
++	CallbackHandler   CoreCallbackHandler
++	statsManager      corestats.Manager
++	coreMutex         sync.Mutex
++	coreInstance      *core.Instance
++	measureMutex      sync.Mutex
++	measureGeneration uint64
++	measureCancel     context.CancelFunc
++	measureDone       chan struct{}
++	IsRunning         bool
+ }
+ 
+ // CoreCallbackHandler defines interface for receiving callbacks and notifications from the core service
+@@ -124,6 +129,8 @@ func (x *CoreController) StartLoop(configContent string, tunFd int32) (err error
+ // StopLoop safely stops the core processing loop and releases resources
+ // Thread-safe method that shuts down the core instance and triggers necessary callbacks
+ func (x *CoreController) StopLoop() error {
++	x.cancelMeasureDelayAndWait()
++
+ 	x.coreMutex.Lock()
+ 	defer x.coreMutex.Unlock()
+ 
+diff --git a/libv2ray_measure_test.go b/libv2ray_measure_test.go
+new file mode 100644
+index 0000000..3e98f22
+--- /dev/null
++++ b/libv2ray_measure_test.go
+@@ -0,0 +1,226 @@
++package libv2ray
++
++import (
++	"bytes"
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"errors"
++	core "github.com/xtls/xray-core/core"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func TestDelayMeasurementHonorsTimeout(t *testing.T) {
++	controller := &CoreController{}
++	ctx, finish := controller.beginDelayMeasurement(10 * time.Millisecond)
++	defer finish()
++
++	<-ctx.Done()
++
++	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
++		t.Fatalf("expected deadline exceeded, got %v", ctx.Err())
++	}
++}
++
++func TestCancelMeasureDelayCancelsActiveMeasurement(t *testing.T) {
++	controller := &CoreController{}
++	ctx, finish := controller.beginDelayMeasurement(time.Second)
++	defer finish()
++
++	controller.CancelMeasureDelay()
++	<-ctx.Done()
++
++	if !errors.Is(ctx.Err(), context.Canceled) {
++		t.Fatalf("expected canceled, got %v", ctx.Err())
++	}
++}
++
++func TestOldCompletionDoesNotClearNewMeasurement(t *testing.T) {
++	controller := &CoreController{}
++	oldCtx, finishOld := controller.beginDelayMeasurement(time.Second)
++	newCtx, finishNew := controller.beginDelayMeasurement(time.Second)
++	defer finishNew()
++
++	<-oldCtx.Done()
++	finishOld()
++	controller.CancelMeasureDelay()
++	<-newCtx.Done()
++
++	if !errors.Is(newCtx.Err(), context.Canceled) {
++		t.Fatalf("expected new measurement to remain cancellable, got %v", newCtx.Err())
++	}
++}
++
++// TLS is real and the HTTP client's DialContext routes through the pinned Xray
++// instance. Only the local test CA is injected at the TLS trust boundary.
++func testProbeClient(t *testing.T, handler http.HandlerFunc) (*http.Client, string) {
++	t.Helper()
++	server := httptest.NewTLSServer(handler)
++	t.Cleanup(server.Close)
++	inst, err := core.StartInstance("json", []byte(`{"outbounds":[{"protocol":"freedom","tag":"proxy"}]}`))
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { inst.Close() })
++	client := newProbeHTTPClient(inst)
++	roots := x509.NewCertPool()
++	roots.AddCert(server.Certificate())
++	client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
++	return client, server.URL
++}
++
++func TestProbeRejectsTLSBodyStalledAfter16KiB(t *testing.T) {
++	client, url := testProbeClient(t, func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Length", "65536")
++		w.Write(bytes.Repeat([]byte("x"), 16*1024))
++		w.(http.Flusher).Flush()
++		<-r.Context().Done()
++	})
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	delay, err := measureHTTPDelay(ctx, client, url, 128*1024)
++	if delay >= 0 || !errors.Is(err, context.DeadlineExceeded) {
++		t.Fatalf("stalled TLS body accepted: delay=%d error=%v", delay, err)
++	}
++}
++
++func TestProbeAcceptsCompleteTLSBodyWithinSharedBudget(t *testing.T) {
++	var requests atomic.Int32
++	client, url := testProbeClient(t, func(w http.ResponseWriter, r *http.Request) {
++		requests.Add(1)
++		w.Write(bytes.Repeat([]byte("x"), 64*1024))
++	})
++	delay, err := measureHTTPDelay(context.Background(), client, url, 128*1024)
++	if err != nil || delay <= 0 || requests.Load() != 2 {
++		t.Fatalf("complete response rejected: delay=%d requests=%d error=%v", delay, requests.Load(), err)
++	}
++}
++
++func TestProbeRejectsOversizedBody(t *testing.T) {
++	client, url := testProbeClient(t, func(w http.ResponseWriter, r *http.Request) {
++		w.Write(bytes.Repeat([]byte("x"), 64*1024))
++	})
++	delay, err := measureHTTPDelay(context.Background(), client, url, 16*1024)
++	if delay >= 0 || err == nil {
++		t.Fatalf("oversized response accepted: delay=%d error=%v", delay, err)
++	}
++}
++
++func TestProbeCancellationAfterTLSHeadersIsNotSuccess(t *testing.T) {
++	headers := make(chan struct{}, 1)
++	client, url := testProbeClient(t, func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Length", "65536")
++		w.Write(bytes.Repeat([]byte("x"), 16*1024))
++		w.(http.Flusher).Flush()
++		headers <- struct{}{}
++		<-r.Context().Done()
++	})
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	done := make(chan error, 1)
++	go func() { _, err := measureHTTPDelay(ctx, client, url, 128*1024); done <- err }()
++	select {
++	case <-headers:
++	case <-time.After(5 * time.Second):
++		t.Fatal("no TLS response headers")
++	}
++	cancel()
++	select {
++	case err := <-done:
++		if !errors.Is(err, context.Canceled) {
++			t.Fatalf("expected cancellation: %v", err)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("probe did not stop after cancellation")
++	}
++}
++
++func TestOutboundProbeCancelledBeforeMeasureCannotStart(t *testing.T) {
++	probe := NewOutboundProbe()
++	probe.Cancel()
++	_, err := probe.Measure("invalid config would otherwise fail parsing", "", 1000, 65536)
++	if !errors.Is(err, context.Canceled) {
++		t.Fatalf("cancel before native entry lost: %v", err)
++	}
++}
++
++func TestOutboundProbeCancellationIsIsolatedAndSingleUse(t *testing.T) {
++	headers := make(chan struct{}, 1)
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/stall" {
++			w.Header().Set("Content-Length", "65536")
++			w.Write(bytes.Repeat([]byte("x"), 16*1024))
++			w.(http.Flusher).Flush()
++			headers <- struct{}{}
++			<-r.Context().Done()
++		} else {
++			w.Write(bytes.Repeat([]byte("x"), 32*1024))
++		}
++	}))
++	defer server.Close()
++	config := `{"outbounds":[{"protocol":"freedom","tag":"proxy"}]}`
++	cancelled := NewOutboundProbe()
++	healthy := NewOutboundProbe()
++	defer cancelled.Cancel()
++	done := make(chan error, 1)
++	go func() { _, err := cancelled.Measure(config, server.URL+"/stall", 5000, 128*1024); done <- err }()
++	select {
++	case <-headers:
++	case <-time.After(5 * time.Second):
++		t.Fatal("probe did not reach server")
++	}
++	cancelled.Cancel()
++	delay, err := healthy.Measure(config, server.URL+"/healthy", 5000, 128*1024)
++	if err != nil || delay <= 0 {
++		t.Fatalf("sibling cancelled or failed: delay=%d error=%v", delay, err)
++	}
++	select {
++	case err := <-done:
++		if !errors.Is(err, context.Canceled) {
++			t.Fatalf("expected native cancellation: %v", err)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("native cancellation did not release attempt")
++	}
++	if _, err := healthy.Measure(config, server.URL, 1000, 65536); err == nil {
++		t.Fatal("probe reused")
++	}
++}
++
++type stopProbeCallbacks struct{ starts, stops int }
++
++func (c *stopProbeCallbacks) Startup() int               { c.starts++; return 0 }
++func (c *stopProbeCallbacks) Shutdown() int              { c.stops++; return 0 }
++func (*stopProbeCallbacks) OnEmitStatus(int, string) int { return 0 }
++
++func TestStopCancelsMeasurementBeforeClosingCoreAndNotifiesOnce(t *testing.T) {
++	callbacks := &stopProbeCallbacks{}
++	controller := NewCoreController(callbacks)
++	if err := controller.StartLoop(`{"stats":{},"outbounds":[{"tag":"proxy","protocol":"freedom"}]}`, 0); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { controller.StopLoop() })
++	ctx, finish := controller.beginDelayMeasurement(time.Second)
++	released := make(chan struct{})
++	go func() { <-ctx.Done(); finish(); close(released) }()
++	if err := controller.StopLoop(); err != nil {
++		t.Fatal(err)
++	}
++	<-released
++	if !errors.Is(ctx.Err(), context.Canceled) {
++		t.Fatalf("measurement not cancelled: %v", ctx.Err())
++	}
++	if controller.IsRunning || controller.coreInstance != nil {
++		t.Fatal("core retained after stop")
++	}
++	if err := controller.StopLoop(); err != nil {
++		t.Fatal(err)
++	}
++	if callbacks.starts != 1 || callbacks.stops != 1 {
++		t.Fatalf("callbacks starts=%d stops=%d", callbacks.starts, callbacks.stops)
++	}
++}
+diff --git a/libv2ray_utils.go b/libv2ray_utils.go
+index 342e516..b30f6ff 100644
+--- a/libv2ray_utils.go
++++ b/libv2ray_utils.go
+@@ -9,6 +9,7 @@ import (
+ 	"net/http"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	corenet "github.com/xtls/xray-core/common/net"
+@@ -56,19 +57,124 @@ func (x *CoreController) QueryAllOutboundTrafficStats() string {
+ // Uses a 12-second timeout context and returns the round-trip time in milliseconds
+ // An error is returned if the connection fails or returns an unexpected status
+ func (x *CoreController) MeasureDelay(url string) (int64, error) {
+-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+-	defer cancel()
++	return x.MeasureDelayWithTimeout(url, 12_000)
++}
++
++// MeasureDelayWithTimeout measures network latency with a caller-supplied timeout.
++func (x *CoreController) MeasureDelayWithTimeout(url string, timeoutMillis int64) (int64, error) {
++	if timeoutMillis <= 0 {
++		return -1, errors.New("timeout must be positive")
++	}
++	ctx, finish := x.beginDelayMeasurement(time.Duration(timeoutMillis) * time.Millisecond)
++	defer finish()
+ 
+ 	return measureInstDelay(ctx, x.coreInstance, url)
+ }
+ 
+-// MeasureOutboundDelay measures the outbound delay for a given configuration and URL
+-func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
+-	config, err := coreserial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
++// CancelMeasureDelay cancels the controller's current delay measurement.
++func (x *CoreController) CancelMeasureDelay() {
++	x.measureMutex.Lock()
++	cancel := x.measureCancel
++	x.measureMutex.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++}
++
++func (x *CoreController) beginDelayMeasurement(timeout time.Duration) (context.Context, func()) {
++	ctx, cancel := context.WithTimeout(context.Background(), timeout)
++	done := make(chan struct{})
++
++	x.measureMutex.Lock()
++	x.measureGeneration++
++	generation := x.measureGeneration
++	previousCancel := x.measureCancel
++	x.measureCancel = cancel
++	x.measureDone = done
++	x.measureMutex.Unlock()
++
++	if previousCancel != nil {
++		previousCancel()
++	}
++
++	var once sync.Once
++	return ctx, func() {
++		once.Do(func() {
++			cancel()
++			close(done)
++			x.measureMutex.Lock()
++			if x.measureGeneration == generation {
++				x.measureCancel = nil
++				x.measureDone = nil
++			}
++			x.measureMutex.Unlock()
++		})
++	}
++}
++
++func (x *CoreController) cancelMeasureDelayAndWait() {
++	x.measureMutex.Lock()
++	cancel := x.measureCancel
++	done := x.measureDone
++	x.measureMutex.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++	if done != nil {
++		<-done
++	}
++}
++
++// OutboundProbe owns exactly one candidate attempt. Cancel is safe before or
++// during Measure; it never touches the connected VPN controller or its probes.
++type OutboundProbe struct {
++	mu        sync.Mutex
++	used      bool
++	cancelled bool
++	cancel    context.CancelFunc
++}
++
++func NewOutboundProbe() *OutboundProbe { return &OutboundProbe{} }
++
++func (p *OutboundProbe) Cancel() {
++	p.mu.Lock()
++	p.cancelled = true
++	cancel := p.cancel
++	p.mu.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++}
++
++func (p *OutboundProbe) Measure(configContent, url string, timeoutMillis, responseBudget int64) (int64, error) {
++	if timeoutMillis <= 0 || timeoutMillis > 12_000 {
++		return -1, errors.New("probe timeout must be between 1 and 12000 milliseconds")
++	}
++	if responseBudget <= 0 || responseBudget > 1024*1024 {
++		return -1, errors.New("probe response budget must be between 1 byte and 1 MiB")
++	}
++	p.mu.Lock()
++	if p.used {
++		p.mu.Unlock()
++		return -1, errors.New("probe already used")
++	}
++	p.used = true
++	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMillis)*time.Millisecond)
++	p.cancel = cancel
++	if p.cancelled {
++		cancel()
++	}
++	p.mu.Unlock()
++	defer func() { cancel(); p.mu.Lock(); p.cancel = nil; p.mu.Unlock() }()
++	if err := ctx.Err(); err != nil {
++		return -1, err
++	}
++	config, err := coreserial.LoadJSONConfig(strings.NewReader(configContent))
+ 	if err != nil {
+ 		return -1, fmt.Errorf("config load error: %w", err)
+ 	}
+ 
++	// Simplify config for testing
+ 	config.Inbound = nil
+ 	var essentialApp []*serial.TypedMessage
+ 	for _, app := range config.App {
+@@ -85,26 +191,34 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error
+ 		return -1, fmt.Errorf("instance creation failed: %w", err)
+ 	}
+ 
++	defer inst.Close()
++	if err := ctx.Err(); err != nil {
++		return -1, err
++	}
+ 	if err := inst.Start(); err != nil {
+ 		return -1, fmt.Errorf("startup failed: %w", err)
+ 	}
+-	defer inst.Close()
+-	return measureInstDelay(context.Background(), inst, url)
++
++	return measureHTTPDelay(ctx, newProbeHTTPClient(inst), url, responseBudget)
+ }
+ 
+-// measureInstDelay measures the delay for an instance to a given URL
++// MeasureOutboundDelay retains the existing entry point with bounded lifetime.
++func MeasureOutboundDelay(configContent, url string) (int64, error) {
++	return NewOutboundProbe().Measure(configContent, url, 12_000, 256*1024)
++}
++
++// measureInstDelay requires a complete bounded response through this instance.
+ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int64, error) {
+ 	if inst == nil {
+ 		return -1, errors.New("core instance is nil")
+ 	}
++	return measureHTTPDelay(ctx, newProbeHTTPClient(inst), url, 256*1024)
++}
+ 
+-	if url == "" {
+-		url = "https://www.google.com/generate_204"
+-	}
+-
++func newProbeHTTPClient(inst *core.Instance) *http.Client {
+ 	tr := &http.Transport{
+ 		TLSHandshakeTimeout: 6 * time.Second,
+-		DisableKeepAlives:   false,
++		DisableCompression:  true,
+ 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+ 			dest, err := corenet.ParseDestination(fmt.Sprintf("%s:%s", network, addr))
+ 			if err != nil {
+@@ -114,62 +228,65 @@ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int
+ 		},
+ 	}
+ 
+-	client := &http.Client{
+-		Transport: tr,
+-		Timeout:   12 * time.Second,
++	return &http.Client{
++		Transport:     tr,
++		Timeout:       12 * time.Second,
++		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+ 	}
+ 
++}
++
++func measureHTTPDelay(ctx context.Context, client *http.Client, url string, responseBudget int64) (int64, error) {
++	defer client.CloseIdleConnections()
++	if responseBudget <= 0 || responseBudget > 1024*1024 {
++		return -1, errors.New("probe response budget must be between 1 byte and 1 MiB")
++	}
++	// One deadline and body budget cover every attempt, including retries.
++	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
++	defer cancel()
++	if url == "" {
++		url = "https://www.google.com/generate_204"
++	}
++	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
++	if err != nil {
++		return -1, fmt.Errorf("failed to create HTTP request: %w", err)
++	}
+ 	var minDuration int64 = -1
+-	success := false
+ 	var lastErr error
+-
+-	defer tr.CloseIdleConnections()
+-
+-	const attempts = 2
+-	for i := 0; i < attempts; i++ {
+-		select {
+-		case <-ctx.Done():
+-			if !success {
+-				return -1, ctx.Err()
+-			}
+-			return minDuration, nil
+-		default:
++	for i := 0; i < 2 && responseBudget > 0; i++ {
++		if err := ctx.Err(); err != nil {
++			return -1, err
+ 		}
+-
+-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+-		if err != nil {
+-			lastErr = fmt.Errorf("failed to create HTTP request: %w", err)
+-			continue
+-		}
+-
+ 		start := time.Now()
+ 		resp, err := client.Do(req)
+ 		if err != nil {
+ 			lastErr = err
+ 			continue
+ 		}
+-
+-		_, err = io.Copy(io.Discard, resp.Body)
+-		resp.Body.Close()
+-
+ 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
++			resp.Body.Close()
+ 			lastErr = fmt.Errorf("invalid status: %s", resp.Status)
+ 			continue
+ 		}
+-
+-		if err != nil {
+-			lastErr = fmt.Errorf("failed to read response body: %w", err)
++		consumed, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, responseBudget+1))
++		resp.Body.Close()
++		if consumed > responseBudget {
++			return -1, errors.New("probe response byte budget exceeded")
++		}
++		responseBudget -= consumed
++		if readErr != nil {
++			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
+ 			continue
+ 		}
+-
+-		duration := time.Since(start).Milliseconds()
+-		if !success || duration < minDuration {
++		duration := max(int64(1), time.Since(start).Milliseconds())
++		if minDuration < 0 || duration < minDuration {
+ 			minDuration = duration
+ 		}
+-
+-		success = true
+ 	}
+-	if !success {
++	if err := ctx.Err(); err != nil {
++		return -1, err
++	}
++	if minDuration < 0 {
+ 		return -1, lastErr
+ 	}
+ 	return minDuration, nil

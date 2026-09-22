@@ -38,7 +38,7 @@ val googleWebClientId = providers.gradleProperty("noki.googleWebClientId")
     .orElse("")
     .get()
 val libv2rayAarFile = layout.projectDirectory.file("libs/libv2ray.aar")
-val libv2rayAarSha256 = "7448EE8CCE680872E906F9BDA78DEB37320CACD4C03AF086B11B8F94CAC70EC6"
+val libv2rayAarSha256 = "C607054BE083E4246575ACA0D78E6CE831E25E173BF20B219DA110E372A310FA"
 val expectedReleaseVersionCode = 243
 val expectedReleaseVersionName = "1.1.2"
 
