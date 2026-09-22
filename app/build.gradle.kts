@@ -39,8 +39,8 @@ val googleWebClientId = providers.gradleProperty("noki.googleWebClientId")
     .get()
 val libv2rayAarFile = layout.projectDirectory.file("libs/libv2ray.aar")
 val libv2rayAarSha256 = "C607054BE083E4246575ACA0D78E6CE831E25E173BF20B219DA110E372A310FA"
-val expectedReleaseVersionCode = 243
-val expectedReleaseVersionName = "1.1.2"
+val expectedReleaseVersionCode = 244
+val expectedReleaseVersionName = "1.2.0"
 
 fun String.toBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
