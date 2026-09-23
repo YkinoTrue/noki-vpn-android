@@ -1,5 +1,3 @@
-diff --git a/libv2ray_main.go b/libv2ray_main.go
-index 83b876f..aadc0d3 100644
 --- a/libv2ray_main.go
 +++ b/libv2ray_main.go
 @@ -1,6 +1,7 @@
@@ -10,7 +8,7 @@ index 83b876f..aadc0d3 100644
  	"fmt"
  	"io"
  	"log"
-@@ -33,11 +34,15 @@ const (
+@@ -33,11 +34,17 @@
  
  // CoreController represents a controller for managing Xray core instance lifecycle
  type CoreController struct {
@@ -23,6 +21,8 @@ index 83b876f..aadc0d3 100644
 +	statsManager      corestats.Manager
 +	coreMutex         sync.Mutex
 +	coreInstance      *core.Instance
++	hotRoute          *hotRoute
++	runtimeID         int64
 +	measureMutex      sync.Mutex
 +	measureGeneration uint64
 +	measureCancel     context.CancelFunc
@@ -31,7 +31,43 @@ index 83b876f..aadc0d3 100644
  }
  
  // CoreCallbackHandler defines interface for receiving callbacks and notifications from the core service
-@@ -124,6 +129,8 @@ func (x *CoreController) StartLoop(configContent string, tunFd int32) (err error
+@@ -106,24 +113,36 @@
+ // StartLoop initializes and starts the core processing loop
+ // Thread-safe method that configures and runs the Xray core with the provided configuration
+ // Returns immediately if the core is already running
+-func (x *CoreController) StartLoop(configContent string, tunFd int32) (err error) {
+-	// Set TUN fd key, 0 means do not use TUN
+-	setEnvVariable(tunFdKey, strconv.Itoa(int(tunFd)))
+-
++func (x *CoreController) StartLoop(configContent string, tunFd int32) error {
++	return x.startLoop(configContent, tunFd, "")
++}
++
++// StartLoopWithHotRoute opts this runtime into transactional outbound switching.
++func (x *CoreController) StartLoopWithHotRoute(configContent string, tunFd int32, outboundTag string) error {
++	if outboundTag == "" {
++		return fmt.Errorf("hot route tag is required")
++	}
++	return x.startLoop(configContent, tunFd, outboundTag)
++}
++
++func (x *CoreController) startLoop(configContent string, tunFd int32, outboundTag string) error {
+ 	x.coreMutex.Lock()
+ 	defer x.coreMutex.Unlock()
+-
+ 	if x.IsRunning {
+-		log.Println("Core is already running")
++		if outboundTag != "" {
++			return fmt.Errorf("core is already running")
++		}
+ 		return nil
+ 	}
+-
+-	return x.doStartLoop(configContent)
++	setEnvVariable(tunFdKey, strconv.Itoa(int(tunFd)))
++	return x.doStartLoop(configContent, outboundTag)
+ }
+ 
  // StopLoop safely stops the core processing loop and releases resources
  // Thread-safe method that shuts down the core instance and triggers necessary callbacks
  func (x *CoreController) StopLoop() error {
@@ -40,9 +76,338 @@ index 83b876f..aadc0d3 100644
  	x.coreMutex.Lock()
  	defer x.coreMutex.Unlock()
  
-diff --git a/libv2ray_measure_test.go b/libv2ray_measure_test.go
-new file mode 100644
-index 0000000..3e98f22
+@@ -155,12 +174,13 @@
+ 		}
+ 		x.coreInstance = nil
+ 	}
++	x.hotRoute = nil
+ 	x.IsRunning = false
+ 	x.statsManager = nil
+ }
+ 
+ // doStartLoop sets up and starts the Xray core
+-func (x *CoreController) doStartLoop(configContent string) error {
++func (x *CoreController) doStartLoop(configContent, outboundTag string) error {
+ 	log.Println("initializing core...")
+ 	config, err := coreserial.LoadJSONConfig(strings.NewReader(configContent))
+ 	if err != nil {
+@@ -171,15 +191,23 @@
+ 	if err != nil {
+ 		return fmt.Errorf("core init failed: %w", err)
+ 	}
++	if outboundTag != "" {
++		x.hotRoute, err = newHotRoute(x.coreInstance, outboundTag)
++		if err != nil {
++			x.doShutdown()
++			return fmt.Errorf("hot route init failed: %w", err)
++		}
++	}
+ 	x.statsManager = x.coreInstance.GetFeature(corestats.ManagerType()).(corestats.Manager)
+ 
+ 	log.Println("starting core...")
+ 	x.IsRunning = true
+ 	if err := x.coreInstance.Start(); err != nil {
+-		x.IsRunning = false
++		x.doShutdown()
+ 		return fmt.Errorf("startup failed: %w", err)
+ 	}
+ 
++	x.runtimeID++
+ 	x.CallbackHandler.Startup()
+ 	x.CallbackHandler.OnEmitStatus(0, "Started successfully, running")
+ 
+--- a/libv2ray_utils.go
++++ b/libv2ray_utils.go
+@@ -9,6 +9,7 @@
+ 	"net/http"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	corenet "github.com/xtls/xray-core/common/net"
+@@ -56,19 +57,124 @@
+ // Uses a 12-second timeout context and returns the round-trip time in milliseconds
+ // An error is returned if the connection fails or returns an unexpected status
+ func (x *CoreController) MeasureDelay(url string) (int64, error) {
+-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+-	defer cancel()
++	return x.MeasureDelayWithTimeout(url, 12_000)
++}
++
++// MeasureDelayWithTimeout measures network latency with a caller-supplied timeout.
++func (x *CoreController) MeasureDelayWithTimeout(url string, timeoutMillis int64) (int64, error) {
++	if timeoutMillis <= 0 {
++		return -1, errors.New("timeout must be positive")
++	}
++	ctx, finish := x.beginDelayMeasurement(time.Duration(timeoutMillis) * time.Millisecond)
++	defer finish()
+ 
+ 	return measureInstDelay(ctx, x.coreInstance, url)
+ }
+ 
+-// MeasureOutboundDelay measures the outbound delay for a given configuration and URL
+-func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
+-	config, err := coreserial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
++// CancelMeasureDelay cancels the controller's current delay measurement.
++func (x *CoreController) CancelMeasureDelay() {
++	x.measureMutex.Lock()
++	cancel := x.measureCancel
++	x.measureMutex.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++}
++
++func (x *CoreController) beginDelayMeasurement(timeout time.Duration) (context.Context, func()) {
++	ctx, cancel := context.WithTimeout(context.Background(), timeout)
++	done := make(chan struct{})
++
++	x.measureMutex.Lock()
++	x.measureGeneration++
++	generation := x.measureGeneration
++	previousCancel := x.measureCancel
++	x.measureCancel = cancel
++	x.measureDone = done
++	x.measureMutex.Unlock()
++
++	if previousCancel != nil {
++		previousCancel()
++	}
++
++	var once sync.Once
++	return ctx, func() {
++		once.Do(func() {
++			cancel()
++			close(done)
++			x.measureMutex.Lock()
++			if x.measureGeneration == generation {
++				x.measureCancel = nil
++				x.measureDone = nil
++			}
++			x.measureMutex.Unlock()
++		})
++	}
++}
++
++func (x *CoreController) cancelMeasureDelayAndWait() {
++	x.measureMutex.Lock()
++	cancel := x.measureCancel
++	done := x.measureDone
++	x.measureMutex.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++	if done != nil {
++		<-done
++	}
++}
++
++// OutboundProbe owns exactly one candidate attempt. Cancel is safe before or
++// during Measure; it never touches the connected VPN controller or its probes.
++type OutboundProbe struct {
++	mu        sync.Mutex
++	used      bool
++	cancelled bool
++	cancel    context.CancelFunc
++}
++
++func NewOutboundProbe() *OutboundProbe { return &OutboundProbe{} }
++
++func (p *OutboundProbe) Cancel() {
++	p.mu.Lock()
++	p.cancelled = true
++	cancel := p.cancel
++	p.mu.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++}
++
++func (p *OutboundProbe) Measure(configContent, url string, timeoutMillis, responseBudget int64) (int64, error) {
++	if timeoutMillis <= 0 || timeoutMillis > 12_000 {
++		return -1, errors.New("probe timeout must be between 1 and 12000 milliseconds")
++	}
++	if responseBudget <= 0 || responseBudget > 1024*1024 {
++		return -1, errors.New("probe response budget must be between 1 byte and 1 MiB")
++	}
++	p.mu.Lock()
++	if p.used {
++		p.mu.Unlock()
++		return -1, errors.New("probe already used")
++	}
++	p.used = true
++	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMillis)*time.Millisecond)
++	p.cancel = cancel
++	if p.cancelled {
++		cancel()
++	}
++	p.mu.Unlock()
++	defer func() { cancel(); p.mu.Lock(); p.cancel = nil; p.mu.Unlock() }()
++	if err := ctx.Err(); err != nil {
++		return -1, err
++	}
++	config, err := coreserial.LoadJSONConfig(strings.NewReader(configContent))
+ 	if err != nil {
+ 		return -1, fmt.Errorf("config load error: %w", err)
+ 	}
+ 
++	// Simplify config for testing
+ 	config.Inbound = nil
+ 	var essentialApp []*serial.TypedMessage
+ 	for _, app := range config.App {
+@@ -85,26 +191,34 @@
+ 		return -1, fmt.Errorf("instance creation failed: %w", err)
+ 	}
+ 
++	defer inst.Close()
++	if err := ctx.Err(); err != nil {
++		return -1, err
++	}
+ 	if err := inst.Start(); err != nil {
+ 		return -1, fmt.Errorf("startup failed: %w", err)
+ 	}
+-	defer inst.Close()
+-	return measureInstDelay(context.Background(), inst, url)
+-}
+-
+-// measureInstDelay measures the delay for an instance to a given URL
++
++	return measureHTTPDelay(ctx, newProbeHTTPClient(inst), url, responseBudget)
++}
++
++// MeasureOutboundDelay retains the existing entry point with bounded lifetime.
++func MeasureOutboundDelay(configContent, url string) (int64, error) {
++	return NewOutboundProbe().Measure(configContent, url, 12_000, 256*1024)
++}
++
++// measureInstDelay requires a complete bounded response through this instance.
+ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int64, error) {
+ 	if inst == nil {
+ 		return -1, errors.New("core instance is nil")
+ 	}
+-
+-	if url == "" {
+-		url = "https://www.google.com/generate_204"
+-	}
+-
++	return measureHTTPDelay(ctx, newProbeHTTPClient(inst), url, 256*1024)
++}
++
++func newProbeHTTPClient(inst *core.Instance) *http.Client {
+ 	tr := &http.Transport{
+ 		TLSHandshakeTimeout: 6 * time.Second,
+-		DisableKeepAlives:   false,
++		DisableCompression:  true,
+ 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+ 			dest, err := corenet.ParseDestination(fmt.Sprintf("%s:%s", network, addr))
+ 			if err != nil {
+@@ -114,62 +228,65 @@
+ 		},
+ 	}
+ 
+-	client := &http.Client{
+-		Transport: tr,
+-		Timeout:   12 * time.Second,
+-	}
+-
++	return &http.Client{
++		Transport:     tr,
++		Timeout:       12 * time.Second,
++		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
++	}
++
++}
++
++func measureHTTPDelay(ctx context.Context, client *http.Client, url string, responseBudget int64) (int64, error) {
++	defer client.CloseIdleConnections()
++	if responseBudget <= 0 || responseBudget > 1024*1024 {
++		return -1, errors.New("probe response budget must be between 1 byte and 1 MiB")
++	}
++	// One deadline and body budget cover every attempt, including retries.
++	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
++	defer cancel()
++	if url == "" {
++		url = "https://www.google.com/generate_204"
++	}
++	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
++	if err != nil {
++		return -1, fmt.Errorf("failed to create HTTP request: %w", err)
++	}
+ 	var minDuration int64 = -1
+-	success := false
+ 	var lastErr error
+-
+-	defer tr.CloseIdleConnections()
+-
+-	const attempts = 2
+-	for i := 0; i < attempts; i++ {
+-		select {
+-		case <-ctx.Done():
+-			if !success {
+-				return -1, ctx.Err()
+-			}
+-			return minDuration, nil
+-		default:
+-		}
+-
+-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+-		if err != nil {
+-			lastErr = fmt.Errorf("failed to create HTTP request: %w", err)
+-			continue
+-		}
+-
++	for i := 0; i < 2 && responseBudget > 0; i++ {
++		if err := ctx.Err(); err != nil {
++			return -1, err
++		}
+ 		start := time.Now()
+ 		resp, err := client.Do(req)
+ 		if err != nil {
+ 			lastErr = err
+ 			continue
+ 		}
+-
+-		_, err = io.Copy(io.Discard, resp.Body)
+-		resp.Body.Close()
+-
+ 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
++			resp.Body.Close()
+ 			lastErr = fmt.Errorf("invalid status: %s", resp.Status)
+ 			continue
+ 		}
+-
+-		if err != nil {
+-			lastErr = fmt.Errorf("failed to read response body: %w", err)
++		consumed, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, responseBudget+1))
++		resp.Body.Close()
++		if consumed > responseBudget {
++			return -1, errors.New("probe response byte budget exceeded")
++		}
++		responseBudget -= consumed
++		if readErr != nil {
++			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
+ 			continue
+ 		}
+-
+-		duration := time.Since(start).Milliseconds()
+-		if !success || duration < minDuration {
++		duration := max(int64(1), time.Since(start).Milliseconds())
++		if minDuration < 0 || duration < minDuration {
+ 			minDuration = duration
+ 		}
+-
+-		success = true
+-	}
+-	if !success {
++	}
++	if err := ctx.Err(); err != nil {
++		return -1, err
++	}
++	if minDuration < 0 {
+ 		return -1, lastErr
+ 	}
+ 	return minDuration, nil
 --- /dev/null
 +++ b/libv2ray_measure_test.go
 @@ -0,0 +1,226 @@
@@ -272,290 +637,1933 @@ index 0000000..3e98f22
 +		t.Fatalf("callbacks starts=%d stops=%d", callbacks.starts, callbacks.stops)
 +	}
 +}
-diff --git a/libv2ray_utils.go b/libv2ray_utils.go
-index 342e516..b30f6ff 100644
---- a/libv2ray_utils.go
-+++ b/libv2ray_utils.go
-@@ -9,6 +9,7 @@ import (
- 	"net/http"
- 	"strconv"
- 	"strings"
+--- /dev/null
++++ b/libv2ray_hotroute.go
+@@ -0,0 +1,467 @@
++package libv2ray
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"strings"
 +	"sync"
- 	"time"
- 
- 	corenet "github.com/xtls/xray-core/common/net"
-@@ -56,19 +57,124 @@ func (x *CoreController) QueryAllOutboundTrafficStats() string {
- // Uses a 12-second timeout context and returns the round-trip time in milliseconds
- // An error is returned if the connection fails or returns an unexpected status
- func (x *CoreController) MeasureDelay(url string) (int64, error) {
--	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
--	defer cancel()
-+	return x.MeasureDelayWithTimeout(url, 12_000)
++	"time"
++
++	"github.com/xtls/xray-core/app/proxyman"
++	"github.com/xtls/xray-core/common"
++	corenet "github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/common/session"
++	core "github.com/xtls/xray-core/core"
++	"github.com/xtls/xray-core/features/outbound"
++	coreserial "github.com/xtls/xray-core/infra/conf/serial"
++	"github.com/xtls/xray-core/transport"
++	"github.com/xtls/xray-core/transport/pipe"
++)
++
++// Experimental host prototype. Install before core.Start with the mux pool close
++// patch. No Android binding or production config opts into this yet.
++// Existing routing (including block/direct rules) is never reloaded.
++type hotRoute struct {
++	outbound.Handler
++	inst                        *core.Instance
++	manager                     outbound.Manager
++	operations                  sync.Mutex
++	mu                          sync.Mutex
++	current, prepared, draining *hotGeneration
++	next                        uint64
++	version                     uint64
++	closed                      bool
++	stopped                     chan struct{}
 +}
 +
-+// MeasureDelayWithTimeout measures network latency with a caller-supplied timeout.
-+func (x *CoreController) MeasureDelayWithTimeout(url string, timeoutMillis int64) (int64, error) {
-+	if timeoutMillis <= 0 {
-+		return -1, errors.New("timeout must be positive")
++type hotGeneration struct {
++	outbound.Handler
++	owner             *hotRoute
++	id                uint64
++	users             int
++	mux               bool
++	registered, ready bool
++	lifetime          context.Context
++	cancel            context.CancelFunc
++	closeOnce         sync.Once
++	disposeOnce       sync.Once
++	disposed          chan struct{}
++}
++
++// Keep the native mux Dispatch synchronous without losing pipe interruption or
++// timeout support. Only client sessions pass here; their XUDP field is nil.
++type hotRouteMuxReader struct{ *pipe.Reader }
++
++func usesMux(handler outbound.Handler) (bool, error) {
++	value, err := handler.SenderSettings().GetInstance()
++	if err != nil {
++		return false, err
 +	}
-+	ctx, finish := x.beginDelayMeasurement(time.Duration(timeoutMillis) * time.Millisecond)
-+	defer finish()
- 
- 	return measureInstDelay(ctx, x.coreInstance, url)
- }
- 
--// MeasureOutboundDelay measures the outbound delay for a given configuration and URL
--func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
--	config, err := coreserial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
-+// CancelMeasureDelay cancels the controller's current delay measurement.
-+func (x *CoreController) CancelMeasureDelay() {
-+	x.measureMutex.Lock()
-+	cancel := x.measureCancel
-+	x.measureMutex.Unlock()
-+	if cancel != nil {
++	sender, ok := value.(*proxyman.SenderConfig)
++	if !ok {
++		return false, errors.New("hot route requires SenderConfig")
++	}
++	return sender.MultiplexSettings != nil && sender.MultiplexSettings.Enabled, nil
++}
++
++func newHotRoute(inst *core.Instance, tag string) (*hotRoute, error) {
++	manager := inst.GetFeature(outbound.ManagerType()).(outbound.Manager)
++	initial := manager.GetHandler(tag)
++	if initial == nil || manager.GetDefaultHandler() != initial {
++		return nil, errors.New("hot route must wrap the initial default handler")
++	}
++	mux, err := usesMux(initial)
++	if err != nil {
++		return nil, err
++	}
++	s := &hotRoute{Handler: initial, inst: inst, manager: manager, stopped: make(chan struct{})}
++	ctx, cancel := context.WithCancel(context.Background())
++	s.current = &hotGeneration{Handler: initial, owner: s, mux: mux, lifetime: ctx, cancel: cancel, disposed: make(chan struct{})}
++	if err := manager.RemoveHandler(context.Background(), tag); err != nil {
 +		cancel()
++		return nil, err
++	}
++	if err := manager.AddHandler(context.Background(), s); err != nil {
++		manager.RemoveHandler(context.Background(), tag)
++		manager.AddHandler(context.Background(), initial)
++		cancel()
++		return nil, err
++	}
++	return s, nil
++}
++
++func (g *hotGeneration) Close() error {
++	var err error
++	g.closeOnce.Do(func() { g.cancel(); err = g.Handler.Close() })
++	return err
++}
++
++func (s *hotRoute) dispose(g *hotGeneration) {
++	if g == nil {
++		return
++	}
++	g.disposeOnce.Do(func() {
++		if g.registered {
++			s.manager.RemoveHandler(context.Background(), g.Tag())
++		}
++		g.Close()
++		s.mu.Lock()
++		if s.draining == g {
++			s.draining = nil
++		}
++		s.mu.Unlock()
++		close(g.disposed)
++	})
++}
++
++func (s *hotRoute) waitDrain(ctx context.Context) error {
++	s.mu.Lock()
++	g, closed := s.draining, s.closed
++	s.mu.Unlock()
++	if closed {
++		return errors.New("route closed")
++	}
++	if g == nil {
++		return nil
++	}
++	select {
++	case <-g.disposed:
++		return nil
++	case <-s.stopped:
++		return errors.New("route closed")
++	case <-ctx.Done():
++		return ctx.Err()
 +	}
 +}
 +
-+func (x *CoreController) beginDelayMeasurement(timeout time.Duration) (context.Context, func()) {
-+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-+	done := make(chan struct{})
++func (s *hotRoute) prepare(base uint64, config string) (uint64, error) {
++	s.operations.Lock()
++	defer s.operations.Unlock()
++	s.mu.Lock()
++	if s.closed || s.version != base || s.prepared != nil || s.draining != nil {
++		s.mu.Unlock()
++		return 0, errors.New("stale version, closed route or generation budget exhausted")
++	}
++	s.next++
++	id := s.next
++	s.mu.Unlock()
++	parsed, err := coreserial.LoadJSONConfig(strings.NewReader(config))
++	if err != nil {
++		return 0, err
++	}
++	if len(parsed.Outbound) != 1 {
++		return 0, errors.New("exactly one candidate outbound required")
++	}
++	tag := fmt.Sprintf("%s-candidate-%d", s.Tag(), id)
++	if s.manager.GetHandler(tag) != nil {
++		return 0, errors.New("candidate tag already exists")
++	}
++	parsed.Outbound[0].Tag = tag
++	object, err := core.CreateObject(s.inst, parsed.Outbound[0])
++	if err != nil {
++		return 0, err
++	}
++	handler := object.(outbound.Handler)
++	mux, err := usesMux(handler)
++	if err != nil {
++		handler.Close()
++		return 0, err
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	g := &hotGeneration{Handler: handler, owner: s, mux: mux, id: id, registered: true, lifetime: ctx, cancel: cancel, disposed: make(chan struct{})}
++	if err := s.manager.AddHandler(context.Background(), g); err != nil {
++		s.dispose(g)
++		return 0, err
++	}
++	s.mu.Lock()
++	if s.closed {
++		s.mu.Unlock()
++		s.dispose(g)
++		return 0, errors.New("route closed during preparation")
++	}
++	s.prepared = g
++	s.mu.Unlock()
++	return id, nil
++}
 +
-+	x.measureMutex.Lock()
-+	x.measureGeneration++
-+	generation := x.measureGeneration
-+	previousCancel := x.measureCancel
-+	x.measureCancel = cancel
-+	x.measureDone = done
-+	x.measureMutex.Unlock()
++// probeURL uses the existing bounded HTTP probe on this exact candidate.
++// Generation cancellation also cancels readiness when STOP wins.
++func (s *hotRoute) probeURL(id uint64, url string, timeoutMillis, responseBudget int64) (int64, error) {
++	delay := int64(-1)
++	err := s.probe(id, func(tag string) error {
++		if timeoutMillis <= 0 || timeoutMillis > 12000 {
++			return errors.New("probe timeout must be between 1 and 12000 milliseconds")
++		}
++		s.mu.Lock()
++		lifetime := s.prepared.lifetime
++		s.mu.Unlock()
++		ctx, cancel := context.WithTimeout(lifetime, time.Duration(timeoutMillis)*time.Millisecond)
++		defer cancel()
++		ctx = session.SetForcedOutboundTagToContext(ctx, tag)
++		var err error
++		delay, err = measureHTTPDelay(ctx, newProbeHTTPClient(s.inst), url, responseBudget)
++		return err
++	})
++	if err != nil {
++		return -1, err
++	}
++	return delay, nil
++}
 +
-+	if previousCancel != nil {
-+		previousCancel()
++// Serializes candidate validation and publication. Custom checks are host-test
++// fixtures; the Android binding must expose only probeURL.
++func (s *hotRoute) probe(id uint64, check func(string) error) error {
++	s.operations.Lock()
++	defer s.operations.Unlock()
++	s.mu.Lock()
++	g := s.prepared
++	if s.closed || g == nil || g.id != id {
++		s.mu.Unlock()
++		return errors.New("stale candidate")
++	}
++	g.ready = false
++	s.mu.Unlock()
++	if err := check(g.Tag()); err != nil {
++		return err
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.closed || g.lifetime.Err() != nil {
++		return errors.New("route closed or candidate cancelled during probe")
++	}
++	g.ready = true
++	return nil
++}
++
++func (s *hotRoute) commit(base, id uint64) error {
++	s.operations.Lock()
++	defer s.operations.Unlock()
++	s.mu.Lock()
++	next := s.prepared
++	if s.closed || s.version != base || next == nil || next.id != id || !next.ready || next.lifetime.Err() != nil || s.draining != nil {
++		s.mu.Unlock()
++		return errors.New("stale, unverified or blocked candidate")
++	}
++	old := s.current
++	s.current, s.prepared = next, nil
++	s.version = id
++	if old.users > 0 {
++		s.draining = old
++		old = nil
++	}
++	s.mu.Unlock()
++	s.dispose(old)
++	return nil
++}
++
++// rollback can restore only a still-live previous generation. Once it has
++// drained, callers must prepare and validate its configuration again.
++// Publication gets a fresh version even though the handler itself is reused.
++func (s *hotRoute) rollback(base, previousID uint64) (uint64, error) {
++	s.operations.Lock()
++	defer s.operations.Unlock()
++	s.mu.Lock()
++	previous := s.draining
++	if s.closed || s.version != base || s.prepared != nil || previous == nil || previous.id != previousID || previous.users == 0 || previous.lifetime.Err() != nil {
++		s.mu.Unlock()
++		return 0, errors.New("stale rollback or previous generation no longer available")
++	}
++	failed := s.current
++	s.next++
++	s.version = s.next
++	version := s.version
++	s.current, s.draining = previous, nil
++	if failed.users > 0 {
++		s.draining = failed
++		failed = nil
++	}
++	s.mu.Unlock()
++	s.dispose(failed)
++	return version, nil
++}
++
++func (s *hotRoute) abort(id uint64) error {
++	// Cancel before waiting for the serialized probe, so abort is prompt.
++	s.mu.Lock()
++	if g := s.prepared; g != nil && g.id == id {
++		g.cancel()
++	}
++	s.mu.Unlock()
++	s.operations.Lock()
++	defer s.operations.Unlock()
++	s.mu.Lock()
++	g := s.prepared
++	if g == nil || g.id != id {
++		s.mu.Unlock()
++		return errors.New("stale candidate")
++	}
++	s.prepared = nil
++	s.mu.Unlock()
++	s.dispose(g)
++	return nil
++}
++
++func (s *hotRoute) Close() error {
++	s.mu.Lock()
++	if s.closed {
++		s.mu.Unlock()
++		return nil
++	}
++	s.closed = true
++	close(s.stopped)
++	generations := []*hotGeneration{s.current, s.prepared, s.draining}
++	s.mu.Unlock()
++	// Manager.Close holds its own lock: never call RemoveHandler here.
++	for _, g := range generations {
++		if g != nil {
++			g.Close()
++		}
++	}
++	return nil
++}
++
++func (s *hotRoute) Dispatch(ctx context.Context, link *transport.Link) { s.dispatch(nil, ctx, link) }
++func (g *hotGeneration) Dispatch(ctx context.Context, link *transport.Link) {
++	g.owner.dispatch(g, ctx, link)
++}
++
++func (s *hotRoute) dispatch(g *hotGeneration, ctx context.Context, link *transport.Link) {
++	s.mu.Lock()
++	if g == nil {
++		g = s.current
++	}
++	obs := session.OutboundsFromContext(ctx)
++	if s.closed || g.lifetime.Err() != nil || (g != s.current && g != s.prepared) || len(obs) == 0 || (obs[len(obs)-1].Target.Network != corenet.Network_TCP && obs[len(obs)-1].Target.Network != corenet.Network_UDP) {
++		s.mu.Unlock()
++		common.Interrupt(link.Reader)
++		common.Interrupt(link.Writer)
++		return
++	}
++	g.users++
++	s.mu.Unlock()
++	ctx, cancel := context.WithCancel(ctx)
++	stop := context.AfterFunc(g.lifetime, cancel)
++	defer func() {
++		stop()
++		cancel()
++		s.mu.Lock()
++		g.users--
++		drained := s.draining == g && g.users == 0
++		s.mu.Unlock()
++		if drained {
++			s.dispose(g)
++		}
++	}()
++	if g.mux {
++		if reader, ok := link.Reader.(*pipe.Reader); ok {
++			link.Reader = &hotRouteMuxReader{reader}
++		}
++		reader, writer := link.Reader, link.Writer
++		stopIO := context.AfterFunc(ctx, func() { common.Interrupt(reader); common.Interrupt(writer) })
++		defer func() {
++			stopIO()
++			// Dispatch may return on ctx.Done before AfterFunc starts.
++			if ctx.Err() != nil {
++				common.Interrupt(reader)
++				common.Interrupt(writer)
++			}
++		}()
++	}
++	g.Handler.Dispatch(ctx, link)
++}
++
++// HotRouteRuntimeID identifies this controller's current opted-in core lifetime.
++func (x *CoreController) HotRouteRuntimeID() (int64, error) {
++	x.coreMutex.Lock()
++	defer x.coreMutex.Unlock()
++	if !x.IsRunning || x.hotRoute == nil {
++		return 0, errors.New("hot routing is not active")
++	}
++	return x.runtimeID, nil
++}
++
++func (x *CoreController) ownedHotRoute(runtimeID int64) (*hotRoute, error) {
++	x.coreMutex.Lock()
++	defer x.coreMutex.Unlock()
++	if runtimeID <= 0 || runtimeID != x.runtimeID || !x.IsRunning || x.hotRoute == nil {
++		return nil, errors.New("stale hot route runtime")
++	}
++	return x.hotRoute, nil
++}
++
++func (x *CoreController) HotRouteVersion(runtimeID int64) (int64, error) {
++	route, err := x.ownedHotRoute(runtimeID)
++	if err != nil {
++		return -1, err
++	}
++	route.mu.Lock()
++	defer route.mu.Unlock()
++	if route.closed {
++		return -1, errors.New("route closed")
++	}
++	return int64(route.version), nil
++}
++
++func (x *CoreController) PrepareHotRoute(runtimeID, base int64, config string) (int64, error) {
++	if base < 0 {
++		return -1, errors.New("negative route version")
++	}
++	route, err := x.ownedHotRoute(runtimeID)
++	if err != nil {
++		return -1, err
++	}
++	id, err := route.prepare(uint64(base), config)
++	if err != nil {
++		return -1, err
++	}
++	return int64(id), nil
++}
++
++func (x *CoreController) ProbeHotRoute(runtimeID, candidateID int64, url string, timeoutMillis, responseBudget int64) (int64, error) {
++	if candidateID <= 0 {
++		return -1, errors.New("invalid candidate ID")
++	}
++	route, err := x.ownedHotRoute(runtimeID)
++	if err != nil {
++		return -1, err
++	}
++	return route.probeURL(uint64(candidateID), url, timeoutMillis, responseBudget)
++}
++
++func (x *CoreController) CommitHotRoute(runtimeID, base, candidateID int64) error {
++	if base < 0 || candidateID <= 0 {
++		return errors.New("invalid route version or candidate ID")
++	}
++	route, err := x.ownedHotRoute(runtimeID)
++	if err != nil {
++		return err
++	}
++	return route.commit(uint64(base), uint64(candidateID))
++}
++
++func (x *CoreController) AbortHotRoute(runtimeID, candidateID int64) error {
++	if candidateID <= 0 {
++		return errors.New("invalid candidate ID")
++	}
++	route, err := x.ownedHotRoute(runtimeID)
++	if err != nil {
++		return err
++	}
++	return route.abort(uint64(candidateID))
++}
++
++func (x *CoreController) RollbackHotRoute(runtimeID, base, previousID int64) (int64, error) {
++	if base < 0 || previousID < 0 {
++		return -1, errors.New("invalid route version or previous ID")
++	}
++	route, err := x.ownedHotRoute(runtimeID)
++	if err != nil {
++		return -1, err
++	}
++	version, err := route.rollback(uint64(base), uint64(previousID))
++	if err != nil {
++		return -1, err
++	}
++	return int64(version), nil
++}
+--- /dev/null
++++ b/libv2ray_hotswitch_test.go
+@@ -0,0 +1,1457 @@
++package libv2ray
++
++import (
++	"bufio"
++	"context"
++	"crypto/sha256"
++	"crypto/x509"
++	"encoding/json"
++	"encoding/pem"
++	"fmt"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	corenet "github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/common/serial"
++	"github.com/xtls/xray-core/common/session"
++	core "github.com/xtls/xray-core/core"
++	"github.com/xtls/xray-core/features/outbound"
++	"github.com/xtls/xray-core/features/routing"
++	coreserial "github.com/xtls/xray-core/infra/conf/serial"
++)
++
++// A real local TCP peer reports its accept identity on every request. No client
++// retries or reconnects hide a lost flow; every peer has a bounded lifetime.
++func hotRoutePeer(t *testing.T, name string) string {
++	t.Helper()
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { listener.Close() })
++	var accepted atomic.Int32
++	go func() {
++		for {
++			conn, err := listener.Accept()
++			if err != nil {
++				return
++			}
++			id := accepted.Add(1)
++			go func() {
++				defer conn.Close()
++				conn.SetDeadline(time.Now().Add(10 * time.Second))
++				reader := bufio.NewReader(conn)
++				for {
++					line, err := reader.ReadString('\n')
++					if err != nil {
++						return
++					}
++					if _, err := fmt.Fprintf(conn, "%s/%d:%s", name, id, line); err != nil {
++						return
++					}
++					if strings.TrimSpace(line) == "finish" {
++						return
++					}
++				}
++			}()
++		}
++	}()
++	return listener.Addr().String()
++}
++
++func hotRouteConfig(tag, redirect string) string {
++	return fmt.Sprintf(`{"outbounds":[{"tag":%q,"protocol":"freedom","settings":{"redirect":%q}}],"routing":{"rules":[{"type":"field","network":"tcp","outboundTag":%q}]}}`, tag, redirect, tag)
++}
++
++func hotRouteRules(t *testing.T, config string) *serial.TypedMessage {
++	t.Helper()
++	parsed, err := coreserial.LoadJSONConfig(strings.NewReader(config))
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, app := range parsed.App {
++		if app.Type == "xray.app.router.Config" {
++			return app
++		}
++	}
++	t.Fatal("routing config missing")
++	return nil
++}
++
++func hotRouteDial(t *testing.T, inst *core.Instance, forcedTag string) net.Conn {
++	t.Helper()
++	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
++	t.Cleanup(cancel)
++	if forcedTag != "" {
++		ctx = session.SetForcedOutboundTagToContext(ctx, forcedTag)
++	}
++	conn, err := core.Dial(ctx, inst, corenet.TCPDestination(corenet.LocalHostIP, 9))
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { conn.Close() })
++	return conn
++}
++
++func hotRouteExchange(t *testing.T, conn net.Conn, message string) string {
++	t.Helper()
++	if _, err := fmt.Fprintln(conn, message); err != nil {
++		t.Fatal(err)
++	}
++	line, err := bufio.NewReader(conn).ReadString('\n')
++	if err != nil {
++		t.Fatal(err)
++	}
++	return strings.TrimSpace(line)
++}
++
++// Characterization only: single-threaded rule publication is not proof of an
++// atomic production transaction, mux drain, Android TUN behavior or migration.
++func TestPinnedCoreKeepsOldTCPFlowWhileRoutingNewFlowsToCandidate(t *testing.T) {
++	oldPeer := hotRoutePeer(t, "old")
++	newPeer := hotRoutePeer(t, "candidate")
++	inst, err := core.StartInstance("json", []byte(hotRouteConfig("old", oldPeer)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { inst.Close() })
++	oldFlow := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, oldFlow, "one"); got != "old/1:one" {
++		t.Fatal(got)
 +	}
 +
-+	var once sync.Once
-+	return ctx, func() {
-+		once.Do(func() {
-+			cancel()
-+			close(done)
-+			x.measureMutex.Lock()
-+			if x.measureGeneration == generation {
-+				x.measureCancel = nil
-+				x.measureDone = nil
++	config, err := coreserial.LoadJSONConfig(strings.NewReader(hotRouteConfig("candidate", newPeer)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	object, err := core.CreateObject(inst, config.Outbound[0])
++	if err != nil {
++		t.Fatal(err)
++	}
++	handler := object.(outbound.Handler)
++	manager := inst.GetFeature(outbound.ManagerType()).(outbound.Manager)
++	if err := manager.AddHandler(context.Background(), handler); err != nil {
++		t.Fatal(err)
++	}
++	probe := hotRouteDial(t, inst, "candidate")
++	if got := hotRouteExchange(t, probe, "probe"); got != "candidate/1:probe" {
++		t.Fatal(got)
++	}
++	probe.Close()
++	before := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, before, "before"); got != "old/2:before" {
++		t.Fatal(got)
++	}
++	before.Close()
++
++	router := inst.GetFeature(routing.RouterType()).(routing.Router)
++	if err := router.AddRule(hotRouteRules(t, hotRouteConfig("candidate", newPeer)), false); err != nil {
++		t.Fatal(err)
++	}
++	next := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, next, "new"); got != "candidate/2:new" {
++		t.Fatal(got)
++	}
++	if got := hotRouteExchange(t, oldFlow, "two"); got != "old/1:two" {
++		t.Fatal(got)
++	}
++	oldFlow.Close()
++	oldHandler := manager.GetHandler("old")
++	if err := manager.RemoveHandler(context.Background(), "old"); err != nil {
++		t.Fatal(err)
++	}
++	if err := oldHandler.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if got := hotRouteExchange(t, next, "three"); got != "candidate/2:three" {
++		t.Fatal(got)
++	}
++}
++
++func TestUpgradedRouterFailedReplacementPreservesPriorRules(t *testing.T) {
++	inst, err := core.StartInstance("json", []byte(hotRouteConfig("old", hotRoutePeer(t, "old"))))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer inst.Close()
++	router := inst.GetFeature(routing.RouterType()).(routing.Router)
++	if len(router.ListRule()) != 1 {
++		t.Fatal("missing initial rule")
++	}
++	invalid := hotRouteRules(t, `{"routing":{"rules":[{"type":"field","outboundTag":"old"}]}}`)
++	if err := router.AddRule(invalid, false); err == nil {
++		t.Fatal("empty condition accepted")
++	}
++	// Xray26.9.9 builds replacement rules before publishing them.
++	if len(router.ListRule()) != 1 {
++		t.Fatal("failed replacement discarded existing routing rules")
++	}
++}
++
++func startHotRoutePrototype(t *testing.T) (*core.Instance, *hotRoute) {
++	t.Helper()
++	return startHotRouteConfig(t, hotRouteConfig("proxy", hotRoutePeer(t, "old")))
++}
++
++func startHotRouteConfig(t *testing.T, text string) (*core.Instance, *hotRoute) {
++	t.Helper()
++	config, err := coreserial.LoadJSONConfig(strings.NewReader(text))
++	if err != nil {
++		t.Fatal(err)
++	}
++	inst, err := core.New(config)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { inst.Close() })
++	route, err := newHotRoute(inst, "proxy")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := inst.Start(); err != nil {
++		t.Fatal(err)
++	}
++	return inst, route
++}
++
++func TestHotRoutePrototypePublishesOnlyVerifiedVersionAndPreservesOldTCP(t *testing.T) {
++	inst, route := startHotRoutePrototype(t)
++	old := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, old, "one"); got != "old/1:one" {
++		t.Fatal(got)
++	}
++	id, err := route.prepare(0, hotRouteConfig("ignored", hotRoutePeer(t, "candidate")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if route.commit(0, id) == nil {
++		t.Fatal("unprobed candidate committed")
++	}
++	before := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, before, "before"); got != "old/2:before" {
++		t.Fatal(got)
++	}
++	before.Close()
++	if err := route.probe(id, func(tag string) error {
++		conn := hotRouteDial(t, inst, tag)
++		defer conn.Close()
++		got := hotRouteExchange(t, conn, "probe")
++		if got != "candidate/1:probe" {
++			return fmt.Errorf("wrong probe path: %s", got)
++		}
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if route.commit(99, id) == nil {
++		t.Fatal("stale base version committed")
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	next := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, next, "new"); got != "candidate/2:new" {
++		t.Fatal(got)
++	}
++	if got := hotRouteExchange(t, old, "two"); got != "old/1:two" {
++		t.Fatal(got)
++	}
++	if _, err := route.prepare(id, hotRouteConfig("another", "127.0.0.1:9")); err == nil {
++		t.Fatal("draining generation budget ignored")
++	}
++	if route.commit(0, id) == nil {
++		t.Fatal("published transaction replayed")
++	}
++}
++
++func TestHotRoutePrototypeAbortsFailedCandidateAndStopWins(t *testing.T) {
++	inst, route := startHotRoutePrototype(t)
++	id, err := route.prepare(0, hotRouteConfig("ignored", hotRoutePeer(t, "wrong")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	err = route.probe(id, func(tag string) error {
++		conn := hotRouteDial(t, inst, tag)
++		defer conn.Close()
++		got := hotRouteExchange(t, conn, "probe")
++		if !strings.HasPrefix(got, "healthy/") {
++			return fmt.Errorf("readiness failed: %s", got)
++		}
++		return nil
++	})
++	if err == nil || route.commit(0, id) == nil {
++		t.Fatal("failed candidate published")
++	}
++	if got := hotRouteExchange(t, hotRouteDial(t, inst, ""), "still-old"); got != "old/1:still-old" {
++		t.Fatal(got)
++	}
++	if err := route.abort(id); err != nil {
++		t.Fatal(err)
++	}
++	if len(route.manager.ListHandlers(context.Background())) != 1 {
++		t.Fatal("aborted handler retained")
++	}
++	next, err := route.prepare(0, hotRouteConfig("ignored", hotRoutePeer(t, "candidate")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if next == id {
++		t.Fatal("aborted generation reused")
++	}
++	route.Close()
++	if route.probe(next, func(string) error { t.Fatal("probe after stop"); return nil }) == nil {
++		t.Fatal("stopped candidate accepted")
++	}
++	if route.commit(0, next) == nil {
++		t.Fatal("commit after stop")
++	}
++}
++
++func TestHotRoutePrototypeRepeatedDrainKeepsHandlerCountBounded(t *testing.T) {
++	inst, route := startHotRoutePrototype(t)
++	old := hotRouteDial(t, inst, "")
++	hotRouteExchange(t, old, "initial")
++	base := uint64(0)
++	for i := 0; i < 20; i++ {
++		name := fmt.Sprintf("peer-%d", i)
++		id, err := route.prepare(base, hotRouteConfig("ignored", hotRoutePeer(t, name)))
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := route.probe(id, func(tag string) error {
++			conn := hotRouteDial(t, inst, tag)
++			defer conn.Close()
++			if got := hotRouteExchange(t, conn, "finish"); got != name+"/1:finish" {
++				return fmt.Errorf("wrong path %s", got)
 +			}
-+			x.measureMutex.Unlock()
++			return nil
++		}); err != nil {
++			t.Fatal(err)
++		}
++		if err := route.commit(base, id); err != nil {
++			t.Fatal(err)
++		}
++		if len(route.manager.ListHandlers(context.Background())) > 3 {
++			t.Fatal("handler budget exceeded")
++		}
++		cancelled, cancel := context.WithCancel(context.Background())
++		cancel()
++		if route.waitDrain(cancelled) == nil {
++			t.Fatal("drain completed while old TCP still live")
++		}
++		// core.Dial.Close does not immediately finish the remote half of TCP.
++		// Let the peer close too; drain must follow actual Dispatch completion.
++		hotRouteExchange(t, old, "finish")
++		old.Close()
++		ctx, finish := context.WithTimeout(context.Background(), time.Second)
++		err = route.waitDrain(ctx)
++		finish()
++		if err != nil {
++			t.Fatal(err)
++		}
++		if len(route.manager.ListHandlers(context.Background())) != 2 {
++			t.Fatal("drained handler retained")
++		}
++		old = hotRouteDial(t, inst, "")
++		if got := hotRouteExchange(t, old, "new"); got != name+"/2:new" {
++			t.Fatal(got)
++		}
++		base = id
++	}
++}
++
++func TestHotRoutePrototypeStopDuringProbeRejectsLateSuccess(t *testing.T) {
++	_, route := startHotRoutePrototype(t)
++	id, err := route.prepare(0, hotRouteConfig("ignored", hotRoutePeer(t, "candidate")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	entered, release := make(chan struct{}), make(chan struct{})
++	defer close(release)
++	result := make(chan error, 1)
++	go func() {
++		result <- route.probe(id, func(string) error {
++			close(entered)
++			select {
++			case <-release:
++				return nil
++			case <-route.stopped:
++				return nil // Simulate a late successful completion after STOP.
++			case <-time.After(time.Second):
++				return fmt.Errorf("probe gate timeout")
++			}
++		})
++	}()
++	select {
++	case <-entered:
++	case <-time.After(time.Second):
++		t.Fatal("probe never started")
++	}
++	if err := route.Close(); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case err := <-result:
++		if err == nil {
++			t.Fatal("late probe accepted after STOP")
++		}
++	case <-time.After(time.Second):
++		t.Fatal("STOP blocked by active probe")
++	}
++	if route.commit(0, id) == nil {
++		t.Fatal("stopped candidate published")
++	}
++}
++
++func TestHotRoutePrototypeInvalidCandidateKeepsCurrentHandler(t *testing.T) {
++	inst, route := startHotRoutePrototype(t)
++	for _, config := range []string{
++		`{`,
++		`{"outbounds":[]}`,
++		`{"outbounds":[{"protocol":"freedom"},{"protocol":"freedom"}]}`,
++	} {
++		if _, err := route.prepare(0, config); err == nil {
++			t.Fatalf("candidate accepted: %s", config)
++		}
++		if len(route.manager.ListHandlers(context.Background())) != 1 {
++			t.Fatal("rejected candidate retained")
++		}
++	}
++	if got := hotRouteExchange(t, hotRouteDial(t, inst, ""), "alive"); got != "old/1:alive" {
++		t.Fatal(got)
++	}
++}
++
++func TestHotRoutePrototypeCommitPreservesDenyRules(t *testing.T) {
++	config := fmt.Sprintf(`{"outbounds":[{"tag":"proxy","protocol":"freedom","settings":{"redirect":%q}},{"tag":"deny","protocol":"blackhole"}],"routing":{"rules":[{"type":"field","port":"10","outboundTag":"deny"},{"type":"field","network":"tcp","outboundTag":"proxy"}]}}`, hotRoutePeer(t, "old"))
++	parsed, err := coreserial.LoadJSONConfig(strings.NewReader(config))
++	if err != nil {
++		t.Fatal(err)
++	}
++	inst, err := core.New(parsed)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { inst.Close() })
++	route, err := newHotRoute(inst, "proxy")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := inst.Start(); err != nil {
++		t.Fatal(err)
++	}
++	assertDenied := func() {
++		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++		defer cancel()
++		conn, err := core.Dial(ctx, inst, corenet.TCPDestination(corenet.LocalHostIP, 10))
++		if err != nil {
++			t.Fatal(err)
++		}
++		defer conn.Close()
++		fmt.Fprintln(conn, "must-not-arrive")
++		buffer := make([]byte, 64)
++		n, err := conn.Read(buffer)
++		if n != 0 || err == nil || ctx.Err() != nil {
++			t.Fatalf("deny route did not close immediately: n=%d err=%v context=%v", n, err, ctx.Err())
++		}
++	}
++	assertDenied()
++	id, err := route.prepare(0, hotRouteConfig("ignored", hotRoutePeer(t, "candidate")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.probe(id, func(tag string) error {
++		conn := hotRouteDial(t, inst, tag)
++		defer conn.Close()
++		if got := hotRouteExchange(t, conn, "finish"); got != "candidate/1:finish" {
++			return fmt.Errorf("wrong probe: %s", got)
++		}
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	assertDenied()
++	if got := hotRouteExchange(t, hotRouteDial(t, inst, ""), "allowed"); got != "candidate/2:allowed" {
++		t.Fatal(got)
++	}
++	if len(inst.GetFeature(routing.RouterType()).(routing.Router).ListRule()) != 2 {
++		t.Fatal("routing rules modified")
++	}
++}
++
++// A real local VLESS/TLS server. Trust is pinned to the generated test certificate;
++// no allowInsecure setting or public endpoint is involved.
++func hotRouteVlessTLS(t *testing.T, peer string, flow ...string) string {
++	t.Helper()
++	certServer := httptest.NewTLSServer(nil)
++	certificate := certServer.TLS.Certificates[0]
++	certServer.Close()
++	key, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
++	if err != nil {
++		t.Fatal(err)
++	}
++	certJSON, err := json.Marshal(strings.Split(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]})), "\n"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	keyJSON, err := json.Marshal(strings.Split(string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})), "\n"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	reservation, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	port := reservation.Addr().(*net.TCPAddr).Port
++	reservation.Close()
++	_, peerPort, err := net.SplitHostPort(peer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// The pinned core blocks private destinations for VLESS by default.
++	// Only this loopback TCP peer is allowed by the isolated test server.
++	const userID = "11111111-1111-4111-8111-111111111111"
++	config := fmt.Sprintf(`{"inbounds":[{"listen":"127.0.0.1","port":%d,"protocol":"vless","settings":{"clients":[{"id":%q}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"certificates":[{"certificate":%s,"key":%s}]}}}],"outbounds":[{"protocol":"freedom","settings":{"redirect":%q,"finalRules":[{"action":"allow","network":"tcp,udp","ip":["127.0.0.1/32"],"port":%q}]}}]}`, port, userID, certJSON, keyJSON, peer, peerPort)
++	if len(flow) > 0 {
++        config = strings.Replace(config, fmt.Sprintf(`"id":%q`, userID), fmt.Sprintf(`"id":%q,"flow":%q`, userID, flow[0]), 1)
++    }
++	server, err := core.StartInstance("json", []byte(config))
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { server.Close() })
++	hash := sha256.Sum256(certificate.Certificate[0])
++	client := fmt.Sprintf(`{"outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"127.0.0.1","port":%d,"users":[{"id":%q,"encryption":"none"}]}]},"streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"serverName":"example.com","pinnedPeerCertSha256":"%x"}}}]}`, port, userID, hash)
++    if len(flow) > 0 {
++        client = strings.Replace(client, fmt.Sprintf(`"id":%q`, userID), fmt.Sprintf(`"id":%q,"flow":%q`, userID, flow[0]), 1)
++    }
++    return client
++}
++
++func TestHotRoutePrototypeVlessTLSKeepsOldSocketAndMovesNewFlows(t *testing.T) {
++	inst, route := startHotRouteConfig(t, hotRouteVlessTLS(t, hotRoutePeer(t, "old-tls")))
++	old := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, old, "one"); got != "old-tls/1:one" {
++		t.Fatal(got)
++	}
++	id, err := route.prepare(0, hotRouteVlessTLS(t, hotRoutePeer(t, "new-tls")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.probe(id, func(tag string) error {
++		conn := hotRouteDial(t, inst, tag)
++		defer conn.Close()
++		if got := hotRouteExchange(t, conn, "finish"); got != "new-tls/1:finish" {
++			return fmt.Errorf("wrong TLS probe: %s", got)
++		}
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	if got := hotRouteExchange(t, old, "two"); got != "old-tls/1:two" {
++		t.Fatal(got)
++	}
++	if got := hotRouteExchange(t, hotRouteDial(t, inst, ""), "new"); got != "new-tls/2:new" {
++		t.Fatal(got)
++	}
++	hotRouteExchange(t, old, "finish")
++	old.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	if err := route.waitDrain(ctx); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func hotRouteUDPPeer(t *testing.T, name string) string {
++	t.Helper()
++	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { conn.Close() })
++	go func() {
++		buffer := make([]byte, 2048)
++		for {
++			n, from, err := conn.ReadFrom(buffer)
++			if err != nil {
++				return
++			}
++			conn.WriteTo([]byte(fmt.Sprintf("%s/%s:%s", name, from.String(), buffer[:n])), from)
++		}
++	}()
++	return conn.LocalAddr().String()
++}
++
++func TestHotRoutePrototypeUDPAssociationStaysOnOldGeneration(t *testing.T) {
++	for _, transport := range []string{"freedom", "vless-tls", "vless-tls-xudp"} {
++		t.Run(transport, func(t *testing.T) {
++			config := func(peer string) string {
++				if strings.HasPrefix(transport, "vless-tls") {
++					config := hotRouteVlessTLS(t, peer)
++					if transport == "vless-tls-xudp" {
++						config = strings.Replace(config, `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":-1,"xudpConcurrency":8}`, 1)
++					}
++					return config
++				}
++				return hotRouteConfig("proxy", peer)
++			}
++			inst, route := startHotRouteConfig(t, config(hotRouteUDPPeer(t, "old")))
++			dial := func(tag string) (net.Conn, context.CancelFunc) {
++				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++				t.Cleanup(cancel)
++				if tag != "" {
++					ctx = session.SetForcedOutboundTagToContext(ctx, tag)
++				}
++				conn, err := core.Dial(ctx, inst, corenet.UDPDestination(corenet.LocalHostIP, 53))
++				if err != nil {
++					t.Fatal(err)
++				}
++				t.Cleanup(func() { conn.Close() })
++				return conn, cancel
++			}
++			exchange := func(conn net.Conn, message string) string {
++				t.Helper()
++				if _, err := conn.Write([]byte(message)); err != nil {
++					t.Fatal(err)
++				}
++				buffer := make([]byte, 2048)
++				n, err := conn.Read(buffer)
++				if err != nil {
++					t.Fatal(err)
++				}
++				return string(buffer[:n])
++			}
++			old, cancelOld := dial("")
++			first := exchange(old, "1")
++			if !strings.HasPrefix(first, "old/") || !strings.HasSuffix(first, ":1") {
++				t.Fatal(first)
++			}
++			identity := strings.TrimSuffix(first, ":1")
++			id, err := route.prepare(0, config(hotRouteUDPPeer(t, "candidate")))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := route.probe(id, func(tag string) error {
++				probe, cancel := dial(tag)
++				defer cancel()
++				defer probe.Close()
++				got := exchange(probe, "probe")
++				if !strings.HasPrefix(got, "candidate/") || !strings.HasSuffix(got, ":probe") {
++					return fmt.Errorf("wrong UDP probe: %s", got)
++				}
++				return nil
++			}); err != nil {
++				t.Fatal(err)
++			}
++			if err := route.commit(0, id); err != nil {
++				t.Fatal(err)
++			}
++			for i := 2; i <= 20; i++ {
++				message := fmt.Sprint(i)
++				if got := exchange(old, message); got != identity+":"+message {
++					t.Fatal("UDP association or sequence changed: ", got)
++				}
++			}
++			next, cancelNext := dial("")
++			defer cancelNext()
++			if got := exchange(next, "new"); !strings.HasPrefix(got, "candidate/") || !strings.HasSuffix(got, ":new") {
++				t.Fatal(got)
++			}
++			cancelled, cancel := context.WithCancel(context.Background())
++			cancel()
++			if route.waitDrain(cancelled) == nil {
++				t.Fatal("live UDP association not retained")
++			}
++			cancelOld()
++			old.Close()
++			ctx, finish := context.WithTimeout(context.Background(), time.Second)
++			defer finish()
++			if err := route.waitDrain(ctx); err != nil {
++				t.Fatal(err)
++			}
++			if len(route.manager.ListHandlers(context.Background())) != 2 {
++				t.Fatal("old UDP generation retained")
++			}
 +		})
 +	}
 +}
 +
-+func (x *CoreController) cancelMeasureDelayAndWait() {
-+	x.measureMutex.Lock()
-+	cancel := x.measureCancel
-+	done := x.measureDone
-+	x.measureMutex.Unlock()
-+	if cancel != nil {
-+		cancel()
-+	}
-+	if done != nil {
-+		<-done
-+	}
-+}
-+
-+// OutboundProbe owns exactly one candidate attempt. Cancel is safe before or
-+// during Measure; it never touches the connected VPN controller or its probes.
-+type OutboundProbe struct {
-+	mu        sync.Mutex
-+	used      bool
-+	cancelled bool
-+	cancel    context.CancelFunc
-+}
-+
-+func NewOutboundProbe() *OutboundProbe { return &OutboundProbe{} }
-+
-+func (p *OutboundProbe) Cancel() {
-+	p.mu.Lock()
-+	p.cancelled = true
-+	cancel := p.cancel
-+	p.mu.Unlock()
-+	if cancel != nil {
-+		cancel()
-+	}
-+}
-+
-+func (p *OutboundProbe) Measure(configContent, url string, timeoutMillis, responseBudget int64) (int64, error) {
-+	if timeoutMillis <= 0 || timeoutMillis > 12_000 {
-+		return -1, errors.New("probe timeout must be between 1 and 12000 milliseconds")
-+	}
-+	if responseBudget <= 0 || responseBudget > 1024*1024 {
-+		return -1, errors.New("probe response budget must be between 1 byte and 1 MiB")
-+	}
-+	p.mu.Lock()
-+	if p.used {
-+		p.mu.Unlock()
-+		return -1, errors.New("probe already used")
-+	}
-+	p.used = true
-+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMillis)*time.Millisecond)
-+	p.cancel = cancel
-+	if p.cancelled {
-+		cancel()
-+	}
-+	p.mu.Unlock()
-+	defer func() { cancel(); p.mu.Lock(); p.cancel = nil; p.mu.Unlock() }()
-+	if err := ctx.Err(); err != nil {
-+		return -1, err
-+	}
-+	config, err := coreserial.LoadJSONConfig(strings.NewReader(configContent))
- 	if err != nil {
- 		return -1, fmt.Errorf("config load error: %w", err)
- 	}
- 
-+	// Simplify config for testing
- 	config.Inbound = nil
- 	var essentialApp []*serial.TypedMessage
- 	for _, app := range config.App {
-@@ -85,26 +191,34 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error
- 		return -1, fmt.Errorf("instance creation failed: %w", err)
- 	}
- 
-+	defer inst.Close()
-+	if err := ctx.Err(); err != nil {
-+		return -1, err
-+	}
- 	if err := inst.Start(); err != nil {
- 		return -1, fmt.Errorf("startup failed: %w", err)
- 	}
--	defer inst.Close()
--	return measureInstDelay(context.Background(), inst, url)
-+
-+	return measureHTTPDelay(ctx, newProbeHTTPClient(inst), url, responseBudget)
- }
- 
--// measureInstDelay measures the delay for an instance to a given URL
-+// MeasureOutboundDelay retains the existing entry point with bounded lifetime.
-+func MeasureOutboundDelay(configContent, url string) (int64, error) {
-+	return NewOutboundProbe().Measure(configContent, url, 12_000, 256*1024)
-+}
-+
-+// measureInstDelay requires a complete bounded response through this instance.
- func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int64, error) {
- 	if inst == nil {
- 		return -1, errors.New("core instance is nil")
- 	}
-+	return measureHTTPDelay(ctx, newProbeHTTPClient(inst), url, 256*1024)
-+}
- 
--	if url == "" {
--		url = "https://www.google.com/generate_204"
--	}
--
-+func newProbeHTTPClient(inst *core.Instance) *http.Client {
- 	tr := &http.Transport{
- 		TLSHandshakeTimeout: 6 * time.Second,
--		DisableKeepAlives:   false,
-+		DisableCompression:  true,
- 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
- 			dest, err := corenet.ParseDestination(fmt.Sprintf("%s:%s", network, addr))
- 			if err != nil {
-@@ -114,62 +228,65 @@ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int
- 		},
- 	}
- 
--	client := &http.Client{
--		Transport: tr,
--		Timeout:   12 * time.Second,
-+	return &http.Client{
-+		Transport:     tr,
-+		Timeout:       12 * time.Second,
-+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
- 	}
- 
-+}
-+
-+func measureHTTPDelay(ctx context.Context, client *http.Client, url string, responseBudget int64) (int64, error) {
-+	defer client.CloseIdleConnections()
-+	if responseBudget <= 0 || responseBudget > 1024*1024 {
-+		return -1, errors.New("probe response budget must be between 1 byte and 1 MiB")
-+	}
-+	// One deadline and body budget cover every attempt, including retries.
-+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
-+	defer cancel()
-+	if url == "" {
-+		url = "https://www.google.com/generate_204"
-+	}
-+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
++func TestMuxHandlerCloseTerminatesActiveSession(t *testing.T) {
++	config := hotRouteVlessTLS(t, hotRoutePeer(t, "mux-peer"))
++	config = strings.Replace(config, `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++	inst, err := core.StartInstance("json", []byte(config))
 +	if err != nil {
-+		return -1, fmt.Errorf("failed to create HTTP request: %w", err)
++		t.Fatal(err)
 +	}
- 	var minDuration int64 = -1
--	success := false
- 	var lastErr error
--
--	defer tr.CloseIdleConnections()
--
--	const attempts = 2
--	for i := 0; i < attempts; i++ {
--		select {
--		case <-ctx.Done():
--			if !success {
--				return -1, ctx.Err()
--			}
--			return minDuration, nil
--		default:
-+	for i := 0; i < 2 && responseBudget > 0; i++ {
-+		if err := ctx.Err(); err != nil {
-+			return -1, err
- 		}
--
--		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
--		if err != nil {
--			lastErr = fmt.Errorf("failed to create HTTP request: %w", err)
--			continue
--		}
--
- 		start := time.Now()
- 		resp, err := client.Do(req)
- 		if err != nil {
- 			lastErr = err
- 			continue
- 		}
--
--		_, err = io.Copy(io.Discard, resp.Body)
--		resp.Body.Close()
--
- 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-+			resp.Body.Close()
- 			lastErr = fmt.Errorf("invalid status: %s", resp.Status)
- 			continue
- 		}
--
--		if err != nil {
--			lastErr = fmt.Errorf("failed to read response body: %w", err)
-+		consumed, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, responseBudget+1))
-+		resp.Body.Close()
-+		if consumed > responseBudget {
-+			return -1, errors.New("probe response byte budget exceeded")
++	t.Cleanup(func() { inst.Close() })
++	flow := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, flow, "before"); got != "mux-peer/1:before" {
++		t.Fatal(got)
++	}
++	manager := inst.GetFeature(outbound.ManagerType()).(outbound.Manager)
++	if err := manager.GetHandler("proxy").Close(); err != nil {
++		t.Fatal(err)
++	}
++	finished := make(chan error, 1)
++	go func() { buffer := make([]byte, 1); _, err := flow.Read(buffer); finished <- err }()
++	select {
++	case err := <-finished:
++		if err == nil {
++			t.Fatal("closed mux session remained readable")
 +		}
-+		responseBudget -= consumed
-+		if readErr != nil {
-+			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
- 			continue
- 		}
--
--		duration := time.Since(start).Milliseconds()
--		if !success || duration < minDuration {
-+		duration := max(int64(1), time.Since(start).Milliseconds())
-+		if minDuration < 0 || duration < minDuration {
- 			minDuration = duration
- 		}
--
--		success = true
- 	}
--	if !success {
-+	if err := ctx.Err(); err != nil {
-+		return -1, err
++	case <-time.After(2 * time.Second):
++		flow.Close()
++		t.Fatal("handler close did not terminate mux session")
 +	}
-+	if minDuration < 0 {
- 		return -1, lastErr
- 	}
- 	return minDuration, nil
++	flow.Close()
++}
++
++func TestXUDPHandlerCloseTerminatesActiveAssociation(t *testing.T) {
++	config := hotRouteVlessTLS(t, hotRouteUDPPeer(t, "xudp-peer"))
++	config = strings.Replace(config, `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":-1,"xudpConcurrency":8}`, 1)
++	inst, err := core.StartInstance("json", []byte(config))
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { inst.Close() })
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	flow, err := core.Dial(ctx, inst, corenet.UDPDestination(corenet.LocalHostIP, 53))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer flow.Close()
++	if _, err := flow.Write([]byte("before")); err != nil {
++		t.Fatal(err)
++	}
++	buffer := make([]byte, 2048)
++	n, err := flow.Read(buffer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	got := string(buffer[:n])
++	if !strings.HasPrefix(got, "xudp-peer/") || !strings.HasSuffix(got, ":before") {
++		t.Fatal(got)
++	}
++	manager := inst.GetFeature(outbound.ManagerType()).(outbound.Manager)
++	if err := manager.GetHandler("proxy").Close(); err != nil {
++		t.Fatal(err)
++	}
++	finished := make(chan error, 1)
++	go func() { buffer := make([]byte, 2048); _, err := flow.Read(buffer); finished <- err }()
++	select {
++	case err := <-finished:
++		if err == nil {
++			t.Fatal("closed XUDP association remained readable")
++		}
++	case <-time.After(2 * time.Second):
++		flow.Close()
++		t.Fatal("handler close did not terminate XUDP association")
++	}
++}
++
++func TestHotRoutePrototypeMuxKeepsOldSocketAndMovesNewFlows(t *testing.T) {
++	muxConfig := func(peer string) string {
++		return strings.Replace(hotRouteVlessTLS(t, peer), `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++	}
++	inst, route := startHotRouteConfig(t, muxConfig(hotRoutePeer(t, "old-tls")))
++	old := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, old, "one"); got != "old-tls/1:one" {
++		t.Fatal(got)
++	}
++	id, err := route.prepare(0, muxConfig(hotRoutePeer(t, "new-tls")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.probe(id, func(tag string) error {
++		conn := hotRouteDial(t, inst, tag)
++		defer conn.Close()
++		if got := hotRouteExchange(t, conn, "finish"); got != "new-tls/1:finish" {
++			return fmt.Errorf("wrong TLS probe: %s", got)
++		}
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	if got := hotRouteExchange(t, old, "two"); got != "old-tls/1:two" {
++		t.Fatal(got)
++	}
++	if got := hotRouteExchange(t, hotRouteDial(t, inst, ""), "new"); got != "new-tls/2:new" {
++		t.Fatal(got)
++	}
++	hotRouteExchange(t, old, "finish")
++	old.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	if err := route.waitDrain(ctx); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestHotRouteMuxStopClosesActiveFlow(t *testing.T) {
++	for _, network := range []string{"tcp", "udp"} {
++		t.Run(network, func(t *testing.T) {
++			var config string
++			target := corenet.TCPDestination(corenet.LocalHostIP, 9)
++			if network == "tcp" {
++				config = hotRouteVlessTLS(t, hotRoutePeer(t, "peer"))
++			} else {
++				config = hotRouteVlessTLS(t, hotRouteUDPPeer(t, "peer"))
++				target = corenet.UDPDestination(corenet.LocalHostIP, 53)
++			}
++			config = strings.Replace(config, `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8,"xudpConcurrency":8}`, 1)
++			inst, route := startHotRouteConfig(t, config)
++			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++			defer cancel()
++			flow, err := core.Dial(ctx, inst, target)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer flow.Close()
++			if got := hotRouteExchange(t, flow, "before"); !strings.HasPrefix(got, "peer/") || !strings.HasSuffix(got, ":before") {
++				t.Fatal(got)
++			}
++			if err := route.Close(); err != nil {
++				t.Fatal(err)
++			}
++			finished := make(chan error, 1)
++			go func() { buffer := make([]byte, 2048); _, err := flow.Read(buffer); finished <- err }()
++			select {
++			case err := <-finished:
++				if err == nil {
++					t.Fatal("flow still readable after STOP")
++				}
++			case <-time.After(time.Second):
++				flow.Close()
++				t.Fatal("STOP left mux flow alive")
++			}
++		})
++	}
++}
++
++func TestHotRouteMuxDrainWaitsForEveryFlow(t *testing.T) {
++	config := func(name string) string {
++		return strings.Replace(hotRouteVlessTLS(t, hotRoutePeer(t, name)), `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++	}
++	inst, route := startHotRouteConfig(t, config("initial"))
++	base := uint64(0)
++	for cycle := 0; cycle < 10; cycle++ {
++		flows := make([]net.Conn, 3)
++		identities := make([]string, 3)
++		for i := range flows {
++			flows[i] = hotRouteDial(t, inst, "")
++			identities[i] = strings.TrimSuffix(hotRouteExchange(t, flows[i], "before"), ":before")
++		}
++		name := fmt.Sprintf("next-%d", cycle)
++		id, err := route.prepare(base, config(name))
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := route.probe(id, func(tag string) error {
++			probe := hotRouteDial(t, inst, tag)
++			defer probe.Close()
++			if got := hotRouteExchange(t, probe, "finish"); got != name+"/1:finish" {
++				return fmt.Errorf("wrong probe: %s", got)
++			}
++			return nil
++		}); err != nil {
++			t.Fatal(err)
++		}
++		if err := route.commit(base, id); err != nil {
++			t.Fatal(err)
++		}
++		if len(route.manager.ListHandlers(context.Background())) > 3 {
++			t.Fatal("handler budget exceeded")
++		}
++		next := hotRouteDial(t, inst, "")
++		if got := hotRouteExchange(t, next, "finish"); got != name+"/2:finish" {
++			t.Fatal(got)
++		}
++		next.Close()
++		for i, flow := range flows {
++			cancelled, cancel := context.WithCancel(context.Background())
++			cancel()
++			if route.waitDrain(cancelled) == nil {
++				t.Fatal("drain completed with a live old flow")
++			}
++			if got := hotRouteExchange(t, flow, "after"); got != identities[i]+":after" {
++				t.Fatal("old flow moved: ", got)
++			}
++			hotRouteExchange(t, flow, "finish")
++			flow.Close()
++		}
++		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++		err = route.waitDrain(ctx)
++		cancel()
++		if err != nil {
++			t.Fatal(err)
++		}
++		if len(route.manager.ListHandlers(context.Background())) != 2 {
++			t.Fatal("drained handler retained")
++		}
++		base = id
++	}
++}
++
++func TestHotRouteMuxAbortClosesOnlyCandidate(t *testing.T) {
++	config := func(name string) string {
++		return strings.Replace(hotRouteVlessTLS(t, hotRoutePeer(t, name)), `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++	}
++	inst, route := startHotRouteConfig(t, config("old"))
++	old := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, old, "before"); got != "old/1:before" {
++		t.Fatal(got)
++	}
++	id, err := route.prepare(0, config("candidate"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	var candidate net.Conn
++	err = route.probe(id, func(tag string) error {
++		candidate = hotRouteDial(t, inst, tag)
++		if got := hotRouteExchange(t, candidate, "probe"); got != "candidate/1:probe" {
++			t.Fatal(got)
++		}
++		return fmt.Errorf("readiness rejected")
++	})
++	if err == nil || route.commit(0, id) == nil {
++		t.Fatal("failed readiness accepted")
++	}
++	if err := route.abort(id); err != nil {
++		t.Fatal(err)
++	}
++	finished := make(chan error, 1)
++	go func() { buffer := make([]byte, 1); _, err := candidate.Read(buffer); finished <- err }()
++	select {
++	case err := <-finished:
++		if err == nil {
++			t.Fatal("aborted candidate still readable")
++		}
++	case <-time.After(time.Second):
++		candidate.Close()
++		t.Fatal("abort retained candidate flow")
++	}
++	if len(route.manager.ListHandlers(context.Background())) != 1 {
++		t.Fatal("aborted candidate retained")
++	}
++	if got := hotRouteExchange(t, old, "after"); got != "old/1:after" {
++		t.Fatal(got)
++	}
++	if got := hotRouteExchange(t, hotRouteDial(t, inst, ""), "finish"); got != "old/2:finish" {
++		t.Fatal(got)
++	}
++	hotRouteExchange(t, old, "finish")
++	next, err := route.prepare(0, config("retry"))
++	if err != nil || next == id {
++		t.Fatal("abort did not release generation budget: ", err)
++	}
++	if err := route.abort(next); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestHotRouteNativeReadinessUsesCandidateAndBudget(t *testing.T) {
++	for _, transport := range []string{"freedom", "vless-tls-mux"} {
++		t.Run(transport, func(t *testing.T) {
++			config := func(peer string) string {
++				if transport == "freedom" {
++					return hotRouteConfig("proxy", peer)
++				}
++				return strings.Replace(hotRouteVlessTLS(t, peer), `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++			}
++
++			var oldRequests, candidateRequests atomic.Int32
++			oldServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				oldRequests.Add(1)
++				w.WriteHeader(http.StatusServiceUnavailable)
++			}))
++			defer oldServer.Close()
++			candidateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				candidateRequests.Add(1)
++				if r.URL.Path == "/large" {
++					fmt.Fprint(w, strings.Repeat("x", 128))
++					return
++				}
++				w.WriteHeader(http.StatusNoContent)
++			}))
++			defer candidateServer.Close()
++			_, route := startHotRouteConfig(t, config(strings.TrimPrefix(oldServer.URL, "http://")))
++			id, err := route.prepare(0, config(strings.TrimPrefix(candidateServer.URL, "http://")))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if _, err := route.probeURL(id, "http://candidate.invalid/large", 1000, 32); err == nil {
++				t.Fatal("oversized readiness accepted")
++			}
++			if route.commit(0, id) == nil {
++				t.Fatal("oversized probe published")
++			}
++			if delay, err := route.probeURL(id, "http://candidate.invalid/health", 1000, 32); err != nil || delay < 1 {
++				t.Fatal("candidate probe failed: ", delay, err)
++			}
++			if oldRequests.Load() != 0 || candidateRequests.Load() == 0 {
++				t.Fatal("readiness used wrong outbound")
++			}
++			// A failed recheck must revoke prior readiness too.
++			if _, err := route.probeURL(id, "http://candidate.invalid/health", 0, 32); err == nil {
++				t.Fatal("invalid timeout accepted")
++			}
++			if route.commit(0, id) == nil {
++				t.Fatal("invalid recheck retained readiness")
++			}
++			if _, err := route.probeURL(id, "http://candidate.invalid/health", 1000, 32); err != nil {
++				t.Fatal(err)
++			}
++			if err := route.commit(0, id); err != nil {
++				t.Fatal(err)
++			}
++
++		})
++	}
++}
++
++func TestHotRouteStopCancelsNativeReadiness(t *testing.T) {
++	for _, mode := range []string{"stop", "timeout"} {
++		t.Run(mode, func(t *testing.T) {
++			timeoutMillis := int64(12000)
++			if mode == "timeout" {
++				timeoutMillis = 100
++			}
++
++			entered := make(chan struct{}, 1)
++			release := make(chan struct{})
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				fmt.Fprint(w, "partial")
++				w.(http.Flusher).Flush()
++				select {
++				case entered <- struct{}{}:
++				default:
++				}
++				select {
++				case <-release:
++				case <-r.Context().Done():
++				}
++			}))
++			defer server.Close()
++			defer close(release)
++			_, route := startHotRoutePrototype(t)
++			id, err := route.prepare(0, hotRouteConfig("ignored", strings.TrimPrefix(server.URL, "http://")))
++			if err != nil {
++				t.Fatal(err)
++			}
++			result := make(chan error, 1)
++			go func() {
++				_, err := route.probeURL(id, "http://candidate.invalid/stall", timeoutMillis, 256)
++				result <- err
++			}()
++			select {
++			case <-entered:
++			case <-time.After(time.Second):
++				t.Fatal("probe did not reach candidate")
++			}
++			if mode == "stop" {
++				route.Close()
++			}
++			select {
++			case err := <-result:
++				if err == nil {
++					t.Fatal("STOP accepted unfinished response")
++				}
++			case <-time.After(time.Second):
++				t.Fatal("STOP did not cancel native readiness")
++			}
++			if route.commit(0, id) == nil {
++				t.Fatal("stopped candidate committed")
++			}
++
++		})
++	}
++}
++
++func TestHotRouteRollbackPreservesBothFlowsAndRejectsStaleVersion(t *testing.T) {
++	config := func(name string) string {
++		return strings.Replace(hotRouteVlessTLS(t, hotRoutePeer(t, name)), `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++	}
++	inst, route := startHotRouteConfig(t, config("old"))
++	old := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, old, "before"); got != "old/1:before" {
++		t.Fatal(got)
++	}
++	id, err := route.prepare(0, config("candidate"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.probe(id, func(tag string) error {
++		probe := hotRouteDial(t, inst, tag)
++		hotRouteExchange(t, probe, "finish")
++		probe.Close()
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	candidate := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, candidate, "before"); got != "candidate/2:before" {
++		t.Fatal(got)
++	}
++	if _, err := route.rollback(id, id); err == nil {
++		t.Fatal("wrong previous ID accepted")
++	}
++	revision, err := route.rollback(id, 0)
++	if err != nil || revision <= id {
++		t.Fatal("rollback failed: ", revision, err)
++	}
++	if got := hotRouteExchange(t, old, "after"); got != "old/1:after" {
++		t.Fatal(got)
++	}
++	if got := hotRouteExchange(t, candidate, "after"); got != "candidate/2:after" {
++		t.Fatal(got)
++	}
++	next := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, next, "finish"); got != "old/2:finish" {
++		t.Fatal(got)
++	}
++	next.Close()
++	if _, err := route.rollback(id, 0); err == nil {
++		t.Fatal("rollback replay accepted")
++	}
++	if _, err := route.prepare(revision, config("over-budget")); err == nil {
++		t.Fatal("third generation accepted during drain")
++	}
++	hotRouteExchange(t, candidate, "finish")
++	candidate.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	err = route.waitDrain(ctx)
++	cancel()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(route.manager.ListHandlers(context.Background())) != 1 {
++		t.Fatal("rolled-back candidate retained")
++	}
++	if _, err := route.prepare(0, config("stale")); err == nil {
++		t.Fatal("old version became valid again after rollback")
++	}
++	prepared, err := route.prepare(revision, config("retry"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.abort(prepared); err != nil {
++		t.Fatal(err)
++	}
++	hotRouteExchange(t, old, "finish")
++	route.Close()
++	if _, err := route.rollback(revision, id); err == nil {
++		t.Fatal("rollback after STOP accepted")
++	}
++}
++
++func TestHotRouteRollbackRejectsDisposedPreviousGeneration(t *testing.T) {
++	_, route := startHotRoutePrototype(t)
++	id, err := route.prepare(0, hotRouteConfig("ignored", hotRoutePeer(t, "candidate")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.probe(id, func(string) error { return nil }); err != nil {
++		t.Fatal(err)
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := route.rollback(id, 0); err == nil {
++		t.Fatal("disposed handler resurrected")
++	}
++	if route.current.id != id {
++		t.Fatal("failed rollback changed current")
++	}
++}
++
++func TestHotRouteRollbackRacesWithLastOldFlow(t *testing.T) {
++	config := func(name string) string {
++		return strings.Replace(hotRouteVlessTLS(t, hotRoutePeer(t, name)), `"tag":"proxy"`, `"tag":"proxy","mux":{"enabled":true,"concurrency":8}`, 1)
++	}
++	inst, route := startHotRouteConfig(t, config("old"))
++	old := hotRouteDial(t, inst, "")
++	hotRouteExchange(t, old, "before")
++	id, err := route.prepare(0, config("candidate"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := route.probe(id, func(tag string) error {
++		probe := hotRouteDial(t, inst, tag)
++		hotRouteExchange(t, probe, "finish")
++		probe.Close()
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if err := route.commit(0, id); err != nil {
++		t.Fatal(err)
++	}
++	start := make(chan struct{})
++	finished := make(chan error, 1)
++	rolledBack := make(chan error, 1)
++	go func() {
++		<-start
++		_, err := fmt.Fprintln(old, "finish")
++		if err == nil {
++			_, err = bufio.NewReader(old).ReadString('\n')
++		}
++		old.Close()
++		finished <- err
++	}()
++	go func() { <-start; _, err := route.rollback(id, 0); rolledBack <- err }()
++	close(start)
++	if err := <-finished; err != nil {
++		t.Fatal(err)
++	}
++	rollbackErr := <-rolledBack
++	want := "old/"
++	if rollbackErr != nil {
++		want = "candidate/"
++		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++		err := route.waitDrain(ctx)
++		cancel()
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	next := hotRouteDial(t, inst, "")
++	if got := hotRouteExchange(t, next, "finish"); !strings.HasPrefix(got, want) {
++		t.Fatal("rollback left unusable current: ", got)
++	}
++	if len(route.manager.ListHandlers(context.Background())) > 2 {
++		t.Fatal("rollback leaked generation")
++	}
++}
++
++func TestCoreControllerHotRouteRuntimeOwnership(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
++	defer server.Close()
++	config := strings.Replace(hotRouteConfig("proxy", strings.TrimPrefix(server.URL, "http://")), "{", `{"stats":{},`, 1)
++	callbacks := &stopProbeCallbacks{}
++	controller := NewCoreController(callbacks)
++	defer controller.StopLoop()
++	if err := controller.StartLoopWithHotRoute(config, 0, "missing"); err == nil {
++		t.Fatal("missing route accepted")
++	}
++	if controller.coreInstance != nil || controller.hotRoute != nil || controller.IsRunning {
++		t.Fatal("failed startup retained resources")
++	}
++	if err := controller.StartLoopWithHotRoute(config, 0, "proxy"); err != nil {
++		t.Fatal(err)
++	}
++	runtimeID, err := controller.HotRouteRuntimeID()
++	if err != nil {
++		t.Fatal(err)
++	}
++	original := controller.coreInstance
++	id, err := controller.PrepareHotRoute(runtimeID, 0, hotRouteConfig("ignored", strings.TrimPrefix(server.URL, "http://")))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := controller.CommitHotRoute(runtimeID, 0, id); err == nil {
++		t.Fatal("unprobed candidate committed")
++	}
++	if delay, err := controller.ProbeHotRoute(runtimeID, id, "http://candidate.invalid/health", 1000, 256); err != nil || delay < 1 {
++		t.Fatal(delay, err)
++	}
++	if err := controller.CommitHotRoute(runtimeID, 0, id); err != nil {
++		t.Fatal(err)
++	}
++	if version, err := controller.HotRouteVersion(runtimeID); err != nil || version != id {
++		t.Fatal(version, err)
++	}
++	if controller.coreInstance != original || callbacks.starts != 1 || callbacks.stops != 0 {
++		t.Fatal("hot switch restarted core")
++	}
++	controller.StopLoop()
++	if err := controller.StartLoopWithHotRoute(config, 0, "proxy"); err != nil {
++		t.Fatal(err)
++	}
++	fresh, err := controller.HotRouteRuntimeID()
++	if err != nil || fresh <= runtimeID {
++		t.Fatal("runtime identity reused")
++	}
++	if _, err := controller.PrepareHotRoute(runtimeID, 0, config); err == nil {
++		t.Fatal("stale prepare admitted")
++	}
++	if _, err := controller.ProbeHotRoute(runtimeID, id, server.URL, 1000, 256); err == nil {
++		t.Fatal("stale probe admitted")
++	}
++	if err := controller.CommitHotRoute(runtimeID, 0, id); err == nil {
++		t.Fatal("stale commit admitted")
++	}
++	if err := controller.AbortHotRoute(runtimeID, id); err == nil {
++		t.Fatal("stale abort admitted")
++	}
++	if _, err := controller.RollbackHotRoute(runtimeID, id, 0); err == nil {
++		t.Fatal("stale rollback admitted")
++	}
++	if version, err := controller.HotRouteVersion(fresh); err != nil || version != 0 {
++		t.Fatal("new runtime changed by stale commands")
++	}
++}
++
++func TestCoreControllerCancelsHotRouteReadiness(t *testing.T) {
++	for _, mode := range []string{"abort", "stop"} {
++		t.Run(mode, func(t *testing.T) {
++			entered := make(chan struct{}, 1)
++			release := make(chan struct{})
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				fmt.Fprint(w, "partial")
++				w.(http.Flusher).Flush()
++				select {
++				case entered <- struct{}{}:
++				default:
++				}
++				select {
++				case <-release:
++				case <-r.Context().Done():
++				}
++			}))
++			defer server.Close()
++			defer close(release)
++			controller := NewCoreController(&stopProbeCallbacks{})
++			defer controller.StopLoop()
++			config := `{"stats":{},"outbounds":[{"protocol":"freedom","tag":"proxy"}]}`
++			if err := controller.StartLoopWithHotRoute(config, 0, "proxy"); err != nil {
++				t.Fatal(err)
++			}
++			runtimeID, err := controller.HotRouteRuntimeID()
++			if err != nil {
++				t.Fatal(err)
++			}
++			id, err := controller.PrepareHotRoute(runtimeID, 0, hotRouteConfig("ignored", strings.TrimPrefix(server.URL, "http://")))
++			if err != nil {
++				t.Fatal(err)
++			}
++			result := make(chan error, 1)
++			go func() {
++				_, err := controller.ProbeHotRoute(runtimeID, id, "http://candidate.invalid/stall", 12000, 256)
++				result <- err
++			}()
++			select {
++			case <-entered:
++			case <-time.After(time.Second):
++				t.Fatal("probe did not enter")
++			}
++			cancelled := make(chan error, 1)
++			go func() {
++				if mode == "abort" {
++					cancelled <- controller.AbortHotRoute(runtimeID, id)
++				} else {
++					cancelled <- controller.StopLoop()
++				}
++			}()
++			select {
++			case err := <-cancelled:
++				if err != nil {
++					t.Fatal(err)
++				}
++			case <-time.After(time.Second):
++				t.Fatal("cancellation blocked behind probe")
++			}
++			select {
++			case err := <-result:
++				if err == nil {
++					t.Fatal("cancelled readiness accepted")
++				}
++			case <-time.After(time.Second):
++				t.Fatal("probe still running")
++			}
++			if controller.CommitHotRoute(runtimeID, 0, id) == nil {
++				t.Fatal("cancelled candidate committed")
++			}
++			if mode == "abort" {
++				if !controller.IsRunning {
++					t.Fatal("abort stopped connected core")
++				}
++				if version, err := controller.HotRouteVersion(runtimeID); err != nil || version != 0 {
++					t.Fatal("abort changed current")
++				}
++			}
++		})
++	}
++}
++
++func TestHotRouteInitialDefaultReadinessWithMultipleOutbounds(t *testing.T) {
++    peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++        w.WriteHeader(http.StatusNoContent)
++    }))
++    defer peer.Close()
++    for _, muxEnabled := range []bool{false, true} {
++        for _, hot := range []bool{false, true} {
++            t.Run(fmt.Sprintf("mux=%v/hot=%v", muxEnabled, hot), func(t *testing.T) {
++                var config map[string]interface{}
++                if err := json.Unmarshal([]byte(hotRouteVlessTLS(t, strings.TrimPrefix(peer.URL, "http://"))), &config); err != nil { t.Fatal(err) }
++                outbounds := config["outbounds"].([]interface{})
++                outbounds[0].(map[string]interface{})["mux"] = map[string]interface{}{"enabled": muxEnabled}
++                config["outbounds"] = append(outbounds,
++                    map[string]interface{}{"tag":"direct", "protocol":"freedom"},
++                    map[string]interface{}{"tag":"block", "protocol":"blackhole"})
++                config["stats"] = map[string]interface{}{}
++                data, err := json.Marshal(config)
++                if err != nil { t.Fatal(err) }
++                controller := NewCoreController(&stopProbeCallbacks{})
++                defer controller.StopLoop()
++                if hot { err = controller.StartLoopWithHotRoute(string(data), 0, "proxy") } else { err = controller.StartLoop(string(data), 0) }
++                if err != nil { t.Fatal(err) }
++                if delay, err := controller.MeasureDelayWithTimeout("http://target.invalid/health", 1500); err != nil || delay < 1 {
++                    t.Fatalf("default readiness: delay=%d error=%v", delay, err)
++                }
++            })
++        }
++    }
++}
++
++func TestHotRouteInitialVisionReadinessWithMultipleOutbounds(t *testing.T) {
++    peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++        w.WriteHeader(http.StatusNoContent)
++    }))
++    defer peer.Close()
++    for _, muxEnabled := range []bool{false, true} {
++        for _, hot := range []bool{false, true} {
++            t.Run(fmt.Sprintf("mux=%v/hot=%v", muxEnabled, hot), func(t *testing.T) {
++                var config map[string]interface{}
++                if err := json.Unmarshal([]byte(hotRouteVlessTLS(t, strings.TrimPrefix(peer.URL, "http://"), "xtls-rprx-vision")), &config); err != nil { t.Fatal(err) }
++                outbounds := config["outbounds"].([]interface{})
++                outbounds[0].(map[string]interface{})["mux"] = map[string]interface{}{"enabled": muxEnabled}
++                config["outbounds"] = append(outbounds,
++                    map[string]interface{}{"tag":"direct", "protocol":"freedom"},
++                    map[string]interface{}{"tag":"block", "protocol":"blackhole"})
++                config["stats"] = map[string]interface{}{}
++                data, err := json.Marshal(config)
++                if err != nil { t.Fatal(err) }
++                controller := NewCoreController(&stopProbeCallbacks{})
++                defer controller.StopLoop()
++                if hot { err = controller.StartLoopWithHotRoute(string(data), 0, "proxy") } else { err = controller.StartLoop(string(data), 0) }
++                if err != nil { t.Fatal(err) }
++                delay, err := controller.MeasureDelayWithTimeout("http://target.invalid/health", 1500)
++                if muxEnabled {
++                    // Both the unwrapped control and hot route reject Vision over mux.
++                    if err == nil { t.Fatal("Vision/mux unexpectedly accepted") }
++                } else if err != nil || delay < 1 {
++                    t.Fatalf("default readiness: delay=%d error=%v", delay, err)
++                }
++            })
++        }
++    }
++}

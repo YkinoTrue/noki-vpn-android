@@ -1,0 +1,158 @@
+--- a/common/mux/client.go
++++ b/common/mux/client.go
+@@ -27,6 +27,14 @@
+ 	Picker  WorkerPicker
+ }
+ 
++// Close releases the pool owned by this manager, including active sessions.
++func (m *ClientManager) Close() error {
++	if m == nil || m.Picker == nil {
++		return nil
++	}
++	return common.Close(m.Picker)
++}
++
+ func (m *ClientManager) Dispatch(ctx context.Context, link *transport.Link) error {
+ 	for i := 0; i < 16; i++ {
+ 		worker, err := m.Picker.PickAvailable()
+@@ -49,8 +57,24 @@
+ 	Factory ClientWorkerFactory
+ 
+ 	access      sync.Mutex
++	closed      bool
+ 	workers     []*ClientWorker
+ 	cleanupTask *task.Periodic
++}
++
++// Close is terminal: no new workers may be created after pool shutdown.
++func (p *IncrementalWorkerPicker) Close() error {
++	p.access.Lock()
++	defer p.access.Unlock()
++	p.closed = true
++	if p.cleanupTask != nil {
++		p.cleanupTask.Close()
++	}
++	for _, worker := range p.workers {
++		worker.Close()
++	}
++	p.workers = nil
++	return nil
+ }
+ 
+ func (p *IncrementalWorkerPicker) cleanupFunc() error {
+@@ -89,6 +113,9 @@
+ 	p.access.Lock()
+ 	defer p.access.Unlock()
+ 
++	if p.closed {
++		return nil, false, errors.New("mux pool closed")
++	}
+ 	idx := p.findAvailable()
+ 	if idx >= 0 {
+ 		n := len(p.workers)
+@@ -119,7 +146,16 @@
+ func (p *IncrementalWorkerPicker) PickAvailable() (*ClientWorker, error) {
+ 	worker, start, err := p.pickInternal()
+ 	if start {
+-		common.Must(p.cleanupTask.Start())
++		if err := p.cleanupTask.Start(); err != nil {
++			return nil, err
++		}
++		// Start runs cleanup outside access. Close may have won during Start.
++		p.access.Lock()
++		if p.closed {
++			p.cleanupTask.Close()
++			worker, err = nil, errors.New("mux pool closed")
++		}
++		p.access.Unlock()
+ 	}
+ 
+ 	return worker, err
+--- a/app/proxyman/outbound/handler.go
++++ b/app/proxyman/outbound/handler.go
+@@ -330,6 +330,7 @@
+ // Close implements common.Closable.
+ func (h *Handler) Close() error {
+ 	common.Close(h.mux)
++	common.Close(h.xudp)
+ 	common.Close(h.proxy)
+ 	return nil
+ }
+--- a/common/mux/client_test.go
++++ b/common/mux/client_test.go
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+@@ -114,3 +115,67 @@
+ 
+ 	common.Must(w2.Close())
+ }
++
++func TestClientManagerCloseDisposesPool(t *testing.T) {
++	mockCtl := gomock.NewController(t)
++	defer mockCtl.Finish()
++	reader, writer := pipe.New(pipe.WithoutSizeLimit())
++	defer reader.Interrupt()
++	defer writer.Close()
++	worker, err := mux.NewClientWorker(transport.Link{Reader: reader, Writer: writer}, mux.ClientStrategy{})
++	common.Must(err)
++	defer worker.Close()
++	factory := mocks.NewMuxClientWorkerFactory(mockCtl)
++	factory.EXPECT().Create().Return(worker, nil).Times(1)
++	picker := &mux.IncrementalWorkerPicker{Factory: factory}
++	manager := &mux.ClientManager{Picker: picker}
++	if _, err := picker.PickAvailable(); err != nil {
++		t.Fatal(err)
++	}
++	common.Close(manager)
++	if !worker.Closed() {
++		t.Fatal("manager close left mux worker open")
++	}
++	if _, err := picker.PickAvailable(); err == nil {
++		t.Fatal("closed pool accepted new work")
++	}
++	common.Close(manager)
++	common.Close(&mux.ClientManager{Enabled: false})
++}
++
++func TestClientManagerCloseDuringPick(t *testing.T) {
++	for i := 0; i < 200; i++ {
++		mockCtl := gomock.NewController(t)
++		reader, writer := pipe.New(pipe.WithoutSizeLimit())
++		worker, err := mux.NewClientWorker(transport.Link{Reader: reader, Writer: writer}, mux.ClientStrategy{})
++		if err != nil {
++			t.Fatal(err)
++		}
++		factory := mocks.NewMuxClientWorkerFactory(mockCtl)
++		var created atomic.Bool
++		factory.EXPECT().Create().DoAndReturn(func() (*mux.ClientWorker, error) {
++			created.Store(true)
++			return worker, nil
++		}).MaxTimes(1)
++		picker := &mux.IncrementalWorkerPicker{Factory: factory}
++		manager := &mux.ClientManager{Picker: picker}
++		start := make(chan struct{})
++		picked := make(chan struct{})
++		closed := make(chan struct{})
++		go func() { <-start; picker.PickAvailable(); close(picked) }()
++		go func() { <-start; common.Close(manager); close(closed) }()
++		close(start)
++		<-picked
++		<-closed
++		if created.Load() && !worker.Closed() {
++			t.Fatal("concurrent close leaked worker")
++		}
++		if _, err := picker.PickAvailable(); err == nil {
++			t.Fatal("closed pool accepted work")
++		}
++		worker.Close()
++		reader.Interrupt()
++		writer.Close()
++		mockCtl.Finish()
++	}
++}

@@ -5,6 +5,24 @@ import org.junit.Test
 
 class EndpointRankingPolicyTest {
     @Test
+    fun handoverKeepsCurrentOnlyWhenItRemainsInTheBestTier() {
+        val tcp = tcpCandidate("tcp")
+        val xhttp = tcp.copy(code = "xhttp", transport = "xhttp", transportMode = "stream-up", flow = null)
+        fun select(network: EndpointRankingPolicy.NetworkKind, health: Map<String, EndpointHealth> = emptyMap(),
+            preferred: String = "tcp") = EndpointRankingPolicy.select(
+            listOf(tcp, tcp.copy(code = "equal"), xhttp), health, network, 1_000L, { 1 },
+            preferredCode = preferred,
+        )?.candidate?.code
+        assertEquals("tcp", select(EndpointRankingPolicy.NetworkKind.WIFI))
+        assertEquals("xhttp", select(EndpointRankingPolicy.NetworkKind.CELLULAR))
+        assertEquals("tcp", select(EndpointRankingPolicy.NetworkKind.CELLULAR,
+            mapOf("tcp" to EndpointHealth(score = 100, lastUpdatedAtMillis = 1_000L))))
+        assertEquals("equal", select(EndpointRankingPolicy.NetworkKind.WIFI,
+            mapOf("tcp" to EndpointHealth(cooldownUntilMillis = 2_000L))))
+        assertEquals("tcp", select(EndpointRankingPolicy.NetworkKind.WIFI, preferred = "xhttp"))
+    }
+
+    @Test
     fun countryAndAutoUseWeightedRandomRatherThanAlwaysPickingTheHeaviestNode() {
         val light = VpnServer("a", "A", "LV", "lv1", "a", 443, true,
             metricsAt = "1970-01-01T00:00:00Z", weight = 1, latencyMs = 20)

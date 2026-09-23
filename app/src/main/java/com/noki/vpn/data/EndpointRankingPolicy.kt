@@ -70,6 +70,7 @@ object EndpointRankingPolicy {
         nowMillis: Long,
         rotationIndex: (String) -> Int,
         excludedCodes: Set<String> = emptySet(),
+        preferredCode: String? = null,
     ): Selection? {
         val ranked = rankCandidates(candidates, health, networkKind, nowMillis, excludedCodes)
         val best = ranked.firstOrNull() ?: return null
@@ -77,7 +78,8 @@ object EndpointRankingPolicy {
         val bestTier = ranked.takeWhile { comparator.compare(best, it) == 0 }
         val endpointClass = classify(best)
         val rotationKey = rotationKeyFor(endpointClass, bestTier)
-        val candidate = bestTier[rotationIndex(rotationKey).floorMod(bestTier.size)]
+        val candidate = bestTier.firstOrNull { it.code == preferredCode }
+            ?: bestTier[rotationIndex(rotationKey).floorMod(bestTier.size)]
         return Selection(candidate, endpointClass, rotationKey)
     }
 

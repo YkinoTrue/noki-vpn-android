@@ -16,7 +16,7 @@ class BootstrapStateMapperTest {
         val device = BackendDevice(
             id = "device-1",
             deviceKey = "stable-key",
-            deviceName = "Samsung SM-G996B",
+            deviceName = "Google Pixel 6",
             customName = "Рабочий телефон",
             platform = "android",
             accessRole = "owner",
@@ -32,13 +32,13 @@ class BootstrapStateMapperTest {
         ).single()
 
         assertEquals("Рабочий телефон", row.title)
-        assertTrue(row.subtitle.startsWith("Samsung Galaxy S21+ 5G • "))
-        assertEquals("Samsung Galaxy S21+ 5G", AndroidDeviceInfo.displayName("samsung SM-G996B"))
+        assertTrue(row.subtitle.startsWith("Google Pixel 6 • "))
+        assertEquals("Google Pixel 6", AndroidDeviceInfo.displayName("google Pixel 6"))
         assertEquals("Unknown MODEL-123", AndroidDeviceInfo.displayName("Unknown MODEL-123"))
         val unnamed = BootstrapStateMapper.mapDevices(
             listOf(device.copy(customName = null)), AppLanguage.EN, "device-1", "stable-key",
         ).single()
-        assertEquals("Samsung Galaxy S21+ 5G", unnamed.title)
+        assertEquals("Google Pixel 6", unnamed.title)
     }
 
     @Test

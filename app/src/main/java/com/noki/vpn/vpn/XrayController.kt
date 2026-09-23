@@ -3,6 +3,8 @@ package com.noki.vpn.vpn
 import android.content.Context
 import android.util.Log
 import android.util.AtomicFile
+import android.os.SystemClock
+import java.util.concurrent.atomic.AtomicReference
 import java.io.File
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
@@ -53,11 +55,62 @@ internal class XrayController(
 
     override fun start(config: String, tunFd: Int): Boolean {
         return try {
-            controller.startLoop(config, tunFd)
+            controller.startLoopWithHotRoute(config, tunFd, "proxy")
             controller.isRunning
         } catch (error: Throwable) {
             SafeLog.e(TAG, "Failed to start Xray core", error)
             false
+        }
+    }
+
+    private data class RouteAttempt(val runtimeId: Long, val base: Long, val candidateId: Long)
+    private val routeAttempt = AtomicReference<RouteAttempt?>(null)
+
+    override fun switchRoute(config: String, canCommit: () -> Boolean): XrayProbeResult {
+        var attempt: RouteAttempt? = null
+        try {
+            if (!canCommit()) return XrayProbeResult(null)
+            val runtime = controller.hotRouteRuntimeID()
+            val base = controller.hotRouteVersion(runtime)
+            val candidate = controller.prepareHotRoute(runtime, base, config)
+            val prepared = RouteAttempt(runtime, base, candidate)
+            attempt = prepared
+            check(routeAttempt.compareAndSet(null, prepared))
+            val deadline = SystemClock.elapsedRealtime() + VpnProbePlanPolicy.TOTAL_TIMEOUT_MILLIS
+            for (target in VpnProbePlanPolicy.candidateTargets()) {
+                if (!canCommit() || routeAttempt.get() !== prepared) break
+                val remaining = deadline - SystemClock.elapsedRealtime()
+                if (remaining <= 0) break
+                val delay = try {
+                    controller.probeHotRoute(runtime, candidate, target.url,
+                        remaining.coerceAtMost(VpnProbePlanPolicy.PER_TARGET_TIMEOUT_MILLIS), 256 * 1024L)
+                } catch (error: Exception) {
+                    SafeLog.w(TAG, "Hot-route readiness failed", error)
+                    continue
+                }
+                if (!canCommit() || routeAttempt.get() !== prepared) break
+                if (delay > 0) {
+                    controller.commitHotRoute(runtime, base, candidate)
+                    return XrayProbeResult(delay)
+                }
+            }
+            return XrayProbeResult(null)
+        } catch (error: Exception) {
+            SafeLog.w(TAG, "Failed to switch Xray route", error)
+            return XrayProbeResult(null, XrayRuntimeIssue.fromThrowable(error))
+        } finally {
+            attempt?.let {
+                routeAttempt.compareAndSet(it, null)
+                // Abort is harmless after a commit and disposes an unpublished candidate.
+                runCatching { controller.abortHotRoute(it.runtimeId, it.candidateId) }
+            }
+        }
+    }
+
+    override fun cancelRouteSwitch() {
+        routeAttempt.getAndSet(null)?.let {
+            runCatching { controller.abortHotRoute(it.runtimeId, it.candidateId) }
+                .onFailure { error -> SafeLog.w(TAG, "Failed to abort Xray route", error) }
         }
     }
 

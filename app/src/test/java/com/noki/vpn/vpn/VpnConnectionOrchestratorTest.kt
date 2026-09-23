@@ -379,6 +379,37 @@ class VpnConnectionOrchestratorTest {
         assertEquals(listOf("cancel_probe", "release_resources", "cancel_background"), events)
     }
 
+    @Test
+    fun `route switch keeps core and tunnel and rejects a stale generation`() = runBlocking {
+        val events = mutableListOf<String>()
+        val runtime = RecordingXrayRuntime(events)
+        val orchestrator = VpnConnectionOrchestrator(runtime, UnusedTunInterfaceFactory, RecordingConnectedSidecars(events))
+        val tun = RecordingTunHandle(events)
+        val settings = DefaultStoredSettingsFactory.create()
+        val generation = orchestrator.beginTransition()
+        orchestrator.withLifecycleLock {
+            orchestrator.activateConnected(generation, 11L, tun, settings, null)
+            assertEquals(1L, orchestrator.switchRoute("candidate", generation) { true }.delayMs)
+            assertSame(tun, orchestrator.currentTunnel())
+            assertEquals(11L, orchestrator.snapshot().owner?.coreId)
+            assertEquals(listOf("start_sidecars:11"), events)
+            orchestrator.invalidate()
+            assertEquals(null, orchestrator.switchRoute("candidate", generation) { true }.delayMs)
+        }
+    }
+
+    @Test
+    fun `route switch rejects a changed network or revoked session`() = runBlocking {
+        val orchestrator = VpnConnectionOrchestrator(
+            RecordingXrayRuntime(mutableListOf()), UnusedTunInterfaceFactory,
+            RecordingConnectedSidecars(mutableListOf()),
+        )
+        val generation = orchestrator.beginTransition()
+        orchestrator.withLifecycleLock {
+            assertEquals(null, orchestrator.switchRoute("candidate", generation) { false }.delayMs)
+        }
+    }
+
 }
 
 private object UnusedTunInterfaceFactory : TunInterfaceFactory {
@@ -415,6 +446,11 @@ private class RecordingXrayRuntime(
         events += "stop_xray"
     }
 
+    override fun switchRoute(config: String, canCommit: () -> Boolean): XrayProbeResult =
+        XrayProbeResult(if (canCommit()) 1L else null)
+
+    override fun cancelRouteSwitch() = Unit
+
     override fun cancelMeasureDelay() {
         events += "cancel_probe"
     }
@@ -432,6 +468,11 @@ private class BlockingFirstCancellationXrayRuntime(
     override fun start(config: String, tunFd: Int): Boolean = true
 
     override fun stop() = Unit
+
+    override fun switchRoute(config: String, canCommit: () -> Boolean): XrayProbeResult =
+        XrayProbeResult(if (canCommit()) 1L else null)
+
+    override fun cancelRouteSwitch() = Unit
 
     override fun cancelMeasureDelay() {
         if (cancellationCalls.incrementAndGet() == 1) {

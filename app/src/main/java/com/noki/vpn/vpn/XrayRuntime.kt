@@ -3,6 +3,10 @@ package com.noki.vpn.vpn
 internal interface XrayRuntime {
     fun start(config: String, tunFd: Int): Boolean
 
+    fun switchRoute(config: String, canCommit: () -> Boolean): XrayProbeResult
+
+    fun cancelRouteSwitch()
+
     fun stop()
 
     fun cancelMeasureDelay()

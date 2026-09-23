@@ -488,7 +488,7 @@ class AdaptiveScreenLayoutTest {
                 state = AppUiState(
                     personalizationSettings = PersonalizationSettings(language = AppLanguage.RU),
                     devices = listOf(
-                        DeviceSession("current", "Samsung SM-G996B", "Android", true, true),
+                        DeviceSession("current", "Google Pixel 6", "Android", true, true),
                         DeviceSession("fixture", "Noki — тестовое устройство", "Android", false, false),
                     ),
                 ),
@@ -499,7 +499,7 @@ class AdaptiveScreenLayoutTest {
             compose.onNodeWithContentDescription("Переименовать").assertIsDisplayed()
             compose.onNodeWithText("Переименовать").assertDoesNotExist()
             val heading = compose.onNodeWithText("Текущее устройство").fetchSemanticsNode().boundsInRoot
-            val card = compose.onNode(hasText("Samsung SM-G996B") and hasClickAction()).fetchSemanticsNode().boundsInRoot
+            val card = compose.onNode(hasText("Google Pixel 6") and hasClickAction()).fetchSemanticsNode().boundsInRoot
             val removeOthers = compose.onNode(
                 hasText("Удалить все устройства кроме текущего") and hasClickAction(),
             ).fetchSemanticsNode().boundsInRoot

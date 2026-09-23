@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -73,7 +74,7 @@ internal class VpnConnectionOrchestrator(
             val previous = synchronized(this) {
                 transitionJob.also { it?.cancel() }
             }
-            if (previous != null) xray.cancelMeasureDelay()
+            if (previous != null) cancelReadinessProbe()
             val replacement = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     if (awaitPrevious) previous?.cancelAndJoin()
@@ -184,11 +185,26 @@ internal class VpnConnectionOrchestrator(
     }
 
     fun cancelReadinessProbe() {
+        xray.cancelRouteSwitch()
         xray.cancelMeasureDelay()
     }
 
     fun measureDelay(targetUrl: String, timeoutMillis: Long): XrayProbeResult =
         xray.measureDelay(targetUrl, timeoutMillis)
+
+    suspend fun switchRoute(
+        config: String,
+        generationId: Long,
+        canCommit: () -> Boolean,
+    ): XrayProbeResult {
+        val job = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[Job])
+        check(lifecycleMutex.holdsLock(job))
+        val result = xray.switchRoute(config) {
+            job.isActive && isCurrent(generationId) && canCommit()
+        }
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        return result
+    }
 
     fun pauseConnectedSidecars() {
         activeOwner?.let(sidecars::stop)
@@ -235,7 +251,7 @@ internal class VpnConnectionOrchestrator(
                 transitionOperation = null
             }
         }
-        xray.cancelMeasureDelay()
+        cancelReadinessProbe()
         job?.cancelAndJoin()
         lifecycleMutex.withLock {
             releaseResourcesWhileOwned(finalState)

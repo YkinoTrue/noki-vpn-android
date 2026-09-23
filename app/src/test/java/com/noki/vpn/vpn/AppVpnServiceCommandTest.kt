@@ -763,7 +763,12 @@ class AppVpnServiceCommandTest {
                     return true
                 }
                 override fun stop() = Unit
-                override fun cancelMeasureDelay() = Unit
+                override fun switchRoute(config: String, canCommit: () -> Boolean): XrayProbeResult =
+        XrayProbeResult(if (canCommit()) 1L else null)
+
+    override fun cancelRouteSwitch() = Unit
+
+    override fun cancelMeasureDelay() = Unit
                 override fun measureDelay(targetUrl: String, timeoutMillis: Long): XrayProbeResult {
                     onProbe()
                     return XrayProbeResult(delayMs = if (startedEndpoints.last() == workingEndpoint) 30L else null)
