@@ -287,7 +287,7 @@ object XrayConfigFactory {
     private fun requireMultiHopTransport(exit: VlessProfile, relay: VlessProfile) {
         require(exit.proxyType == "vless" && relay.proxyType == "vless"
             && exit.transport == "tcp" && relay.transport == "tcp"
-            && exit.security == "reality" && relay.security == "reality"
+            && exit.security == "tls" && relay.security == "reality"
             && relay.multiHop == null && relay.youtubeCascade == null) { "multihop_transport_unsupported" }
     }
 
