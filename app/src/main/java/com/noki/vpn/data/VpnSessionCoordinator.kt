@@ -60,6 +60,11 @@ class VpnSessionCoordinator(
     ): Result = withContext(Dispatchers.IO) {
         val network = context?.let { com.noki.vpn.vpn.AndroidUnderlyingNetworkSource(it).currentSnapshot()?.network }
         sessionApi = if (backendApi is BackendApiClient && network != null) backendApi.onNetwork(network) else backendApi
+        if (settings.advancedSettings.multiHop.enabled) {
+            val prepared = prepareAtNode(token, settings, knownDevices, VpnSessionSelection(countryCode = ""))
+            if (!VpnProfileValidator.isUsable(prepared.settings)) throw UnusableFreshProfileException()
+            return@withContext prepared
+        }
         val catalog = backendStep("server_catalog") {
             sessionApi.serverLocations(token, settings.backendDeviceId.ifBlank { null }, settings.backendDeviceKey.ifBlank { null })
         }
@@ -116,8 +121,9 @@ class VpnSessionCoordinator(
 
         val networkKind = context?.let(EndpointSelector::currentNetworkKind)
             ?: EndpointRankingPolicy.NetworkKind.OTHER
-        val endpointHealth = repository.loadEndpointHealth(networkKind)
-        val tcpPrecheck = startupTcpPrecheck ?: ::defaultStartupTcpPrecheck
+        val multiHop = settings.advancedSettings.multiHop.enabled
+        val endpointHealth = if (multiHop) emptyMap() else repository.loadEndpointHealth(networkKind)
+        val tcpPrecheck = if (multiHop) null else startupTcpPrecheck ?: ::defaultStartupTcpPrecheck
         val selection = endpointSelectionProvider?.invoke(
             deviceSession.session,
             settings.advancedSettings,
@@ -135,7 +141,7 @@ class VpnSessionCoordinator(
             onDiagnostic = onDiagnostic,
         )
         val endpointOptions = EndpointSelector.optionsFromSession(deviceSession.session)
-        val advancedSettings = EndpointGroupPolicy.settingsAfterSelection(
+        val advancedSettings = if (multiHop) settings.advancedSettings else EndpointGroupPolicy.settingsAfterSelection(
             settings = settings.advancedSettings,
             endpointCode = selection.endpointCode,
             endpointOptions = endpointOptions,
@@ -247,11 +253,12 @@ class VpnSessionCoordinator(
                 deviceKey = currentDevice.deviceKey,
                 deviceNonce = challenge.nonce,
                 deviceSignature = signature,
-                countryCode = sessionSelection.countryCode,
-                locationCode = sessionSelection.locationCode,
-                excludeLocationCode = sessionSelection.excludeLocationCode,
+                countryCode = sessionSelection.countryCode.takeIf { !settings.advancedSettings.multiHop.enabled },
+                locationCode = sessionSelection.locationCode.takeIf { !settings.advancedSettings.multiHop.enabled },
+                excludeLocationCode = sessionSelection.excludeLocationCode.takeIf { !settings.advancedSettings.multiHop.enabled },
                 profileCode = profileCode,
-                nodeId = sessionSelection.nodeId,
+                nodeId = sessionSelection.nodeId.takeIf { !settings.advancedSettings.multiHop.enabled },
+                multiHop = settings.advancedSettings.multiHop.takeIf { it.enabled },
         ) }
         if (!session.canConnect) {
             throw BackendException("vpn_access_denied", 403)

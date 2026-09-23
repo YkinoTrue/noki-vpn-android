@@ -77,6 +77,7 @@ class EndpointProbeRunner(
         }
         ensureCurrent()
         val advancedSettings: AdvancedSettings = settings.advancedSettings
+        if (advancedSettings.multiHop.enabled) return emptyList()
         if (advancedSettings.endpointSelectionMode != EndpointSelectionMode.AUTO) return emptyList()
         val matchingProtocol = session.endpointCandidates
             .filter { EndpointSelector.matchesProtocol(it, advancedSettings.protocol) }

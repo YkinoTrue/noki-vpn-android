@@ -341,7 +341,11 @@ fun AppScreen(
                             onBypassRulesClicked = {
                                 openSharedDestination(AppDestination.SITE_RULES_BYPASS)
                             },
+                            onMultiHopClicked = {
+                                openSharedDestination(AppDestination.MULTIHOP)
+                            },
                         )
+                        AppDestination.MULTIHOP -> MultiHopScreen(state, viewModel)
                         AppDestination.APP_FILTER -> AppFilterScreen(
                             state = state,
                             viewModel = viewModel,

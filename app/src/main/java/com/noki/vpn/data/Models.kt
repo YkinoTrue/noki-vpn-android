@@ -66,6 +66,30 @@ enum class EndpointSelectionMode {
 
 enum class ServerSelectionMode { AUTO, COUNTRY, SERVER }
 
+@Immutable
+data class HopSelection(
+    val kind: ServerSelectionMode,
+    val countryCode: String? = null,
+    val nodeId: String? = null,
+)
+
+@Immutable
+data class MultiHopSettings(
+    val enabled: Boolean = false,
+    val entry: HopSelection? = null,
+    val exit: HopSelection? = null,
+)
+
+@Immutable
+data class MultiHopRuntime(
+    val selection: MultiHopSettings,
+    val entryNodeId: String,
+    val exitNodeId: String,
+    val relay: VlessProfile,
+    val policyHash: String,
+    val policyExpiresAtEpochMillis: Long,
+)
+
 enum class VpnConnectionState {
     DISCONNECTED,
     CONNECTING,
@@ -153,6 +177,7 @@ data class VlessProfile(
     val shortId: String = "",
     val spiderX: String = "/",
     val youtubeCascade: YoutubeCascadeProfile? = null,
+    val multiHop: MultiHopRuntime? = null,
 )
 
 data class VpnEndpointOption(
@@ -246,6 +271,7 @@ data class AdvancedSettings(
     val killSwitchEnabled: Boolean = false,
     val alwaysOnDomains: List<String> = emptyList(),
     val bypassDomains: List<String> = emptyList(),
+    val multiHop: MultiHopSettings = MultiHopSettings(),
 )
 
 data class StoredSettings(
@@ -309,6 +335,8 @@ data class VpnServer(
     val metricsAt: String? = null,
     val weight: Int = 1,
     val latencyMs: Int? = null,
+    val multiHopEntryAvailable: Boolean = false,
+    val multiHopExitAvailable: Boolean = false,
 )
 
 @Immutable

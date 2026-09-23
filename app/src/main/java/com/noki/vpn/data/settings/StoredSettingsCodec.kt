@@ -44,6 +44,7 @@ internal class StoredSettingsCodec(
             "youtubeCascade",
             settings.profile.youtubeCascade?.let(::encodeYoutubeCascade) ?: JSONObject.NULL,
         )
+        .put("multiHopRuntime", settings.profile.multiHop?.let(::encodeMultiHopRuntime) ?: JSONObject.NULL)
         .put("filterMode", settings.filterMode.name)
         .put("selectedPackages", JSONArray(settings.selectedPackages.sorted()))
         .put("backendUserId", settings.userProfile.backendUserId)
@@ -83,6 +84,7 @@ internal class StoredSettingsCodec(
         .put("anonymousLogsEnabled", settings.advancedSettings.anonymousLogsEnabled)
         .put("anonymousLogConsentVersion", 1)
         .put("youtubeDirectDpiEnabled", settings.advancedSettings.youtubeDirectDpiEnabled)
+        .put("multiHopSettings", encodeMultiHopSettings(settings.advancedSettings.multiHop))
         .put("killSwitchEnabled", settings.advancedSettings.killSwitchEnabled)
         .put("alwaysOnDomains", JSONArray(settings.advancedSettings.alwaysOnDomains))
         .put("bypassDomains", JSONArray(settings.advancedSettings.bypassDomains))
@@ -122,6 +124,7 @@ internal class StoredSettingsCodec(
             shortId = json.optString("shortId"),
             spiderX = json.optString("spiderX", "/"),
             youtubeCascade = decodeYoutubeCascade(json.optJSONObject("youtubeCascade")),
+            multiHop = decodeMultiHopRuntime(json.optJSONObject("multiHopRuntime")),
         ),
         filterMode = runCatching {
             AppFilterMode.valueOf(json.optString("filterMode", AppFilterMode.ALL_APPS.name))
@@ -195,6 +198,7 @@ internal class StoredSettingsCodec(
                 json.optInt("anonymousLogConsentVersion", 0) >= 1 &&
                     json.optBoolean("anonymousLogsEnabled", false),
             youtubeDirectDpiEnabled = json.optBoolean("youtubeDirectDpiEnabled", false),
+            multiHop = decodeMultiHopSettings(json.optJSONObject("multiHopSettings")),
             killSwitchEnabled = json.optBoolean("killSwitchEnabled", false),
             alwaysOnDomains = DefaultStoredSettingsFactory.normalizeAlwaysOnDomains(
                 json.optJSONArray("alwaysOnDomains").toStringList(),
@@ -245,6 +249,68 @@ internal class StoredSettingsCodec(
                 it.publicKey.isNotBlank() &&
                 it.shortId.isNotBlank()
         }
+    }
+
+    private fun encodeMultiHopSettings(settings: MultiHopSettings): JSONObject = JSONObject()
+        .put("enabled", settings.enabled)
+        .put("entry", settings.entry?.let(::encodeHop) ?: JSONObject.NULL)
+        .put("exit", settings.exit?.let(::encodeHop) ?: JSONObject.NULL)
+
+    private fun encodeHop(hop: HopSelection): JSONObject = JSONObject()
+        .put("kind", hop.kind.name)
+        .put("countryCode", hop.countryCode)
+        .put("nodeId", hop.nodeId)
+
+    private fun decodeMultiHopSettings(json: JSONObject?): MultiHopSettings {
+        if (json == null) return MultiHopSettings()
+        fun hop(value: JSONObject?): HopSelection? {
+            if (value == null) return null
+            val kind = runCatching { ServerSelectionMode.valueOf(value.getString("kind")) }.getOrNull()
+                ?: return null
+            if (kind == ServerSelectionMode.AUTO) return null
+            return HopSelection(kind, value.optString("countryCode").takeIf(String::isNotBlank),
+                value.optString("nodeId").takeIf(String::isNotBlank))
+        }
+        return MultiHopSettings(json.optBoolean("enabled", false),
+            hop(json.optJSONObject("entry")), hop(json.optJSONObject("exit")))
+    }
+
+    private fun encodeMultiHopRuntime(runtime: MultiHopRuntime): JSONObject = JSONObject()
+        .put("selection", encodeMultiHopSettings(runtime.selection))
+        .put("entryNodeId", runtime.entryNodeId)
+        .put("exitNodeId", runtime.exitNodeId)
+        .put("policyHash", runtime.policyHash)
+        .put("policyExpiresAtEpochMillis", runtime.policyExpiresAtEpochMillis)
+        .put("relay", JSONObject()
+            .put("remark", runtime.relay.remark)
+            .put("endpointCode", runtime.relay.endpointCode)
+            .put("host", runtime.relay.host)
+            .put("port", runtime.relay.port)
+            .put("uuid", runtime.relay.uuid)
+            .put("serverName", runtime.relay.serverName)
+            .put("publicKey", runtime.relay.publicKey)
+            .put("shortId", runtime.relay.shortId)
+            .put("fingerprint", runtime.relay.fingerprint))
+
+    private fun decodeMultiHopRuntime(json: JSONObject?): MultiHopRuntime? {
+        if (json == null) return null
+        val relay = json.optJSONObject("relay") ?: return null
+        val selection = decodeMultiHopSettings(json.optJSONObject("selection"))
+        return MultiHopRuntime(
+            selection = selection,
+            entryNodeId = json.optString("entryNodeId"),
+            exitNodeId = json.optString("exitNodeId"),
+            policyHash = json.optString("policyHash"),
+            policyExpiresAtEpochMillis = json.optLong("policyExpiresAtEpochMillis"),
+            relay = VlessProfile(
+                remark = relay.optString("remark", "Noki VPN"),
+                endpointCode = relay.optString("endpointCode"),
+                host = relay.optString("host"), port = relay.optString("port", "11443"),
+                uuid = relay.optString("uuid"), flow = "", security = "reality",
+                serverName = relay.optString("serverName"), publicKey = relay.optString("publicKey"),
+                shortId = relay.optString("shortId"), fingerprint = relay.optString("fingerprint", "chrome"),
+            ),
+        )
     }
 
     private fun encodeEndpointOptions(options: List<VpnEndpointOption>) = JSONArray().apply {

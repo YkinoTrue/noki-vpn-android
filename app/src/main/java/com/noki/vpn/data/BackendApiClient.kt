@@ -347,17 +347,32 @@ class BackendApiClient(
         excludeLocationCode: String?,
         profileCode: String,
         nodeId: String?,
+        multiHop: MultiHopSettings?,
     ): BackendVpnSession {
         val payload = JSONObject()
             .put("device_key", deviceKey)
             .put("device_id", deviceId)
             .put("device_nonce", deviceNonce)
             .put("device_signature", deviceSignature)
-            .put("country_code", countryCode)
-            .put("location_code", locationCode)
-            .put("exclude_location_code", excludeLocationCode)
-            .put("profile_code", profileCode)
-            .put("node_id", nodeId)
+            .put("profile_code", if (multiHop?.enabled == true) "auto" else profileCode)
+        if (multiHop?.enabled == true) {
+            fun hop(selection: HopSelection?): JSONObject {
+                val selected = requireNotNull(selection) { "multihop_selector_missing" }
+                return when (selected.kind) {
+                    ServerSelectionMode.COUNTRY -> JSONObject()
+                        .put("kind", "country").put("country_code", selected.countryCode)
+                    ServerSelectionMode.SERVER -> JSONObject()
+                        .put("kind", "node").put("node_id", selected.nodeId)
+                    ServerSelectionMode.AUTO -> throw IllegalArgumentException("multihop_selector_invalid")
+                }
+            }
+            payload.put("multihop", JSONObject().put("entry", hop(multiHop.entry)).put("exit", hop(multiHop.exit)))
+        } else {
+            payload.put("country_code", countryCode)
+                .put("location_code", locationCode)
+                .put("exclude_location_code", excludeLocationCode)
+                .put("node_id", nodeId)
+        }
         return postJson("/vpn/session", payload, token).toBackendVpnSession()
     }
 

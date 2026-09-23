@@ -83,6 +83,17 @@ fun HomeScreen(
                 state.userProfile.actualCountryCode
             } else state.userProfile.selectedCountryCode
             val selectedLocation = homeSelectedLocation(state.locations, state.userProfile)
+            val multiHop = state.advancedSettings.multiHop
+            fun hopLabel(selection: com.noki.vpn.data.HopSelection?): String = when (selection?.kind) {
+                ServerSelectionMode.COUNTRY -> state.locations.firstOrNull {
+                    it.countryCode.equals(selection.countryCode, true)
+                }?.country ?: selection.countryCode.orEmpty()
+                ServerSelectionMode.SERVER -> state.locations.flatMap { it.servers }
+                    .firstOrNull { it.id == selection.nodeId }?.name
+                    ?: tr(language, "Сервер недоступен", "Server unavailable")
+                else -> tr(language, "Не выбран", "Not selected")
+            }
+            val multiHopLabel = "${hopLabel(multiHop.entry)} → ${hopLabel(multiHop.exit)}"
             val selectedServer = if (state.userProfile.serverSelectionMode == ServerSelectionMode.SERVER) {
                 selectedLocation?.servers?.firstOrNull { server ->
                     server.id == state.userProfile.selectedNodeId ||
@@ -106,6 +117,7 @@ fun HomeScreen(
                 enabled = liveWorkEnabled,
             )
             var isServerMenuExpanded by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(multiHop.enabled) { if (multiHop.enabled) isServerMenuExpanded = false }
             var keepServerSheetBackdrop by remember { mutableStateOf(false) }
             LaunchedEffect(isServerMenuExpanded) {
                 if (isServerMenuExpanded) {
@@ -297,16 +309,19 @@ fun HomeScreen(
                     selectedServerCode = selectedLocation?.code ?: displayedCountryCode,
                     expanded = isServerMenuExpanded,
                     onToggle = {
-                        isServerMenuExpanded = !isServerMenuExpanded
-                        if (isServerMenuExpanded) viewModel.refreshServerStats()
+                        if (multiHop.enabled) viewModel.openScreen(AppDestination.MULTIHOP)
+                        else {
+                            isServerMenuExpanded = !isServerMenuExpanded
+                            if (isServerMenuExpanded) viewModel.refreshServerStats()
+                        }
                     },
                     backdrop = backdrop,
                     liveGlassEnabled = effectiveLiveGlassEnabled,
-                    country = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
+                    country = if (multiHop.enabled) "MultiHop" else if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
                         tr(language, "Автовыбор", "Automatic")
                     } else selectedLocation?.country
                         ?: tr(language, "Нет сервера", "No server"),
-                    subtitle = if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
+                    subtitle = if (multiHop.enabled) multiHopLabel else if (state.userProfile.serverSelectionMode == ServerSelectionMode.AUTO) {
                         selectedLocation?.country
                     } else if (state.userProfile.serverSelectionMode == ServerSelectionMode.SERVER) {
                         selectedServer?.name

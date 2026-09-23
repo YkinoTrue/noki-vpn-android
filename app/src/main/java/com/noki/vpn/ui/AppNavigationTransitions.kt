@@ -179,6 +179,7 @@ internal fun AppDestination.navigationOrder(): Int {
         AppDestination.STATS -> 3
         AppDestination.PLANS -> 4
         AppDestination.ADVANCED_SETTINGS -> 5
+        AppDestination.MULTIHOP -> 6
         AppDestination.APP_FILTER -> 6
         AppDestination.SITE_RULES_ALWAYS_ON -> 7
         AppDestination.SITE_RULES_BYPASS -> 8

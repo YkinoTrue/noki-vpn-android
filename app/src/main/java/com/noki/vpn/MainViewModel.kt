@@ -18,6 +18,7 @@ import com.noki.vpn.data.HomeLayoutVariant
 import com.noki.vpn.data.VpnConnectionState
 import com.noki.vpn.data.VpnEndpointOption
 import com.noki.vpn.data.VpnProtocol
+import com.noki.vpn.data.MultiHopSettings
 import com.noki.vpn.vpn.VpnRuntimeMode
 
 class MainViewModel(
@@ -250,6 +251,8 @@ class MainViewModel(
 
     fun setYoutubeDirectDpiEnabled(enabled: Boolean) =
         runtime.setYoutubeDirectDpiEnabled(enabled)
+
+    fun setMultiHop(settings: MultiHopSettings) = runtime.setMultiHop(settings)
 
     fun toggleBiometric(enabled: Boolean) = runtime.toggleBiometric(enabled)
 

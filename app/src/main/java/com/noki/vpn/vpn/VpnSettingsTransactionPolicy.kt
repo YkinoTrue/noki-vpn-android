@@ -4,6 +4,7 @@ import com.noki.vpn.data.StoredSettings
 import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.PlanCode
 import com.noki.vpn.data.ServerSelectionMode
+import com.noki.vpn.data.MultiHopSettings
 
 object VpnSettingsTransactionPolicy {
     private data class SelectionKey(
@@ -15,6 +16,7 @@ object VpnSettingsTransactionPolicy {
         val countryCode: String,
         val serverSelectionMode: ServerSelectionMode,
         val nodeId: String,
+        val multiHop: MultiHopSettings,
     )
 
     private fun StoredSettings.selectionKey() = SelectionKey(
@@ -26,6 +28,7 @@ object VpnSettingsTransactionPolicy {
         userProfile.selectedCountryCode,
         userProfile.serverSelectionMode,
         userProfile.selectedNodeId,
+        advancedSettings.multiHop,
     )
 
     data class RuntimeCommitOutcome(

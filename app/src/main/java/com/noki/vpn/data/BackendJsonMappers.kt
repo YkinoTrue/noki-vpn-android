@@ -112,6 +112,8 @@ internal fun JSONObject.toBackendLocation(): BackendLocation =
                     loadPercent = node.optBackendInt("load_percent"),
                     metricsAt = node.optBackendString("metrics_at"),
                     weight = node.optInt("weight", 1),
+                    multiHopEntryAvailable = node.optBoolean("multihop_entry_available", false),
+                    multiHopExitAvailable = node.optBoolean("multihop_exit_available", false),
                 )
             }
         }.orEmpty(),
@@ -364,7 +366,12 @@ internal object BackendTemporaryVpnResponseParser {
 }
 
 internal object BackendVpnSessionJsonParser {
-    fun parse(json: JSONObject): BackendVpnSession = BackendVpnSession(
+    fun parse(json: JSONObject): BackendVpnSession {
+        val routeMode = json.optString("route_mode", "direct")
+        require(routeMode == "direct" || routeMode == "multihop") { "multihop_route_mode_invalid" }
+        val candidates = parseEndpointCandidates(json.optJSONArray("endpoint_candidates"))
+        val multiHop = if (routeMode == "multihop") parseMultiHop(json.getJSONObject("multihop"), candidates) else null
+        return BackendVpnSession(
         canConnect = json.optBoolean("can_connect", false),
         profileCode = json.optString("profile_code", "tls"),
         locationCode = json.getString("location_code"),
@@ -390,10 +397,59 @@ internal object BackendVpnSessionJsonParser {
         vpnSecret = json.getString("vpn_secret"),
         flow = json.optBackendString("flow"),
         planCode = json.optBackendString("plan_code"),
-        endpointCandidates = parseEndpointCandidates(json.optJSONArray("endpoint_candidates")),
+        endpointCandidates = candidates,
         connectIp = json.optBackendString("connect_ip"),
         youtubeCascade = parseYoutubeCascade(json.optJSONObject("youtube_cascade")),
+        routeMode = routeMode,
+        multiHop = multiHop,
     )
+    }
+
+    private fun parseMultiHop(json: JSONObject, candidates: List<BackendEndpointCandidate>): BackendMultiHopSession {
+        fun hop(json: JSONObject): HopSelection = when (json.getString("kind")) {
+            "country" -> HopSelection(ServerSelectionMode.COUNTRY, countryCode = json.getString("country_code"))
+            "node" -> HopSelection(ServerSelectionMode.SERVER, nodeId = json.getString("node_id"))
+            else -> throw IllegalArgumentException("multihop_selector_invalid")
+        }
+        val selection = json.getJSONObject("selection")
+        val entry = parseEndpointCandidate(json.getJSONObject("entry"))
+        val exitNodeId = json.getString("exit_node_id")
+        val policyHash = json.getString("policy_hash")
+        val expiry = runCatching { java.time.Instant.parse(json.getString("policy_expires_at")).toEpochMilli() }
+            .recoverCatching { java.time.OffsetDateTime.parse(json.getString("policy_expires_at")).toInstant().toEpochMilli() }
+            .getOrElse { throw IllegalArgumentException("multihop_policy_expiry_invalid", it) }
+        require(entry.nodeId != null && entry.nodeId != exitNodeId && exitNodeId.isNotBlank()) {
+            "multihop_nodes_invalid"
+        }
+        require(entry.entryPort in 1..65535 && isPublicIpv4(entry.connectIp)) { "multihop_entry_invalid" }
+        require(entry.proxyType == "vless" && entry.security == "reality" && entry.transport == "tcp") {
+            "multihop_transport_unsupported"
+        }
+        require(candidates.isNotEmpty() && candidates.all {
+            it.nodeId == exitNodeId && it.entryPort in 1..65535 && isPublicIpv4(it.connectIp)
+                && it.proxyType == "vless" && it.security == "reality" && it.transport == "tcp"
+        }) { "multihop_exit_invalid" }
+        require(policyHash.matches(Regex("[0-9a-f]{64}")) && expiry > System.currentTimeMillis()) {
+            "multihop_policy_invalid"
+        }
+        return BackendMultiHopSession(
+            entry = entry,
+            selection = MultiHopSettings(enabled = true,
+                entry = hop(selection.getJSONObject("entry")), exit = hop(selection.getJSONObject("exit"))),
+            exitNodeId = exitNodeId, policyHash = policyHash, policyExpiresAtEpochMillis = expiry,
+        )
+    }
+
+    private fun isPublicIpv4(value: String?): Boolean {
+        val tokens = value?.split('.') ?: return false
+        if (tokens.size != 4) return false
+        val parts = tokens.map { it.toIntOrNull() ?: return false }
+        if (parts.any { it !in 0..255 }) return false
+        val (a, b) = parts
+        return a in 1..223 && a !in setOf(10, 127) && !(a == 169 && b == 254)
+            && !(a == 172 && b in 16..31) && !(a == 192 && b == 168)
+            && !(a == 100 && b in 64..127) && !(a == 198 && b in 18..19)
+    }
 
     private fun parseYoutubeCascade(json: JSONObject?): YoutubeCascadeProfile? {
         if (json == null) return null
@@ -422,40 +478,40 @@ internal object BackendVpnSessionJsonParser {
         return buildList {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
-                add(
-                    BackendEndpointCandidate(
-                        code = item.getString("code"),
-                        nodeId = item.optBackendString("node_id"),
-                        label = item.optString("label"),
-                        locationCode = item.optString("location_code"),
-                        locationName = item.optString("location_name"),
-                        entryHost = item.getString("entry_host"),
-                        entryPort = item.optInt("entry_port", 443),
-                        serverName = item.optString("server_name"),
-                        proxyType = item.optString("proxy_type", "vless"),
-                        transport = item.optString("transport", "tcp"),
-                        transportMode = item.optBackendString("transport_mode"),
-                        security = item.optString("security", "tls"),
-                        fingerprint = item.optBackendString("fingerprint"),
-                        requestHost = item.optBackendString("request_host"),
-                        path = item.optBackendString("path"),
-                        alpn = item.optBackendString("alpn"),
-                        allowInsecure = item.optBoolean("allow_insecure", false),
-                        enableMux = item.optBoolean("enable_mux", false),
-                        randomUserAgent = item.optBoolean("random_user_agent", false),
-                        publicKey = item.optBackendString("public_key"),
-                        shortId = item.optBackendString("short_id"),
-                        flow = item.optBackendString("flow"),
-                        priority = item.optInt("priority", 100),
-                        weight = item.optInt("weight", 100),
-                        canaryOnly = item.optBoolean("canary_only", false),
-                        tags = item.optJSONArray("tags").toBackendStringList(),
-                        connectIp = item.optBackendString("connect_ip"),
-                    ),
-                )
+                add(parseEndpointCandidate(item))
             }
         }
     }
+
+    private fun parseEndpointCandidate(item: JSONObject): BackendEndpointCandidate = BackendEndpointCandidate(
+        code = item.getString("code"),
+        nodeId = item.optBackendString("node_id"),
+        label = item.optString("label"),
+        locationCode = item.optString("location_code"),
+        locationName = item.optString("location_name"),
+        entryHost = item.getString("entry_host"),
+        entryPort = item.optInt("entry_port", 443),
+        serverName = item.optString("server_name"),
+        proxyType = item.optString("proxy_type", "vless"),
+        transport = item.optString("transport", "tcp"),
+        transportMode = item.optBackendString("transport_mode"),
+        security = item.optString("security", "tls"),
+        fingerprint = item.optBackendString("fingerprint"),
+        requestHost = item.optBackendString("request_host"),
+        path = item.optBackendString("path"),
+        alpn = item.optBackendString("alpn"),
+        allowInsecure = item.optBoolean("allow_insecure", false),
+        enableMux = item.optBoolean("enable_mux", false),
+        randomUserAgent = item.optBoolean("random_user_agent", false),
+        publicKey = item.optBackendString("public_key"),
+        shortId = item.optBackendString("short_id"),
+        flow = item.optBackendString("flow"),
+        priority = item.optInt("priority", 100),
+        weight = item.optInt("weight", 100),
+        canaryOnly = item.optBoolean("canary_only", false),
+        tags = item.optJSONArray("tags").toBackendStringList(),
+        connectIp = item.optBackendString("connect_ip"),
+    )
 
 }
 

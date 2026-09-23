@@ -34,6 +34,7 @@ interface VpnSessionApi {
         excludeLocationCode: String?,
         profileCode: String,
         nodeId: String? = null,
+        multiHop: MultiHopSettings? = null,
     ): BackendVpnSession
 }
 

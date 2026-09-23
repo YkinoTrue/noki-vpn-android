@@ -37,13 +37,20 @@ object EndpointSelector {
         networkKind: EndpointRankingPolicy.NetworkKind? = null,
         onDiagnostic: (String) -> Unit = {},
     ): EndpointSelectionResult {
+        if (settings.multiHop.enabled) {
+            require(session.routeMode == "multihop" && session.multiHop?.selection == settings.multiHop) {
+                "multihop_session_mismatch"
+            }
+        } else {
+            require(session.routeMode != "multihop") { "multihop_session_unexpected" }
+        }
         val selection = selectCandidate(
             context = context,
             session = session,
             settings = settings,
             endpointHealth = endpointHealth,
             rotationIndex = rotationIndex,
-            startupTcpPrecheck = startupTcpPrecheck,
+            startupTcpPrecheck = startupTcpPrecheck.takeIf { !settings.multiHop.enabled },
             networkKind = networkKind,
             onDiagnostic = onDiagnostic,
         )
@@ -52,7 +59,8 @@ object EndpointSelector {
         val profile = when {
             candidate != null -> profileFromCandidate(session, candidate)
             selection != null -> VlessProfile()
-            else -> profileFromLegacySession(session)
+            else -> if (settings.multiHop.enabled) throw IllegalArgumentException("multihop_candidate_missing")
+                else profileFromLegacySession(session)
         }
         val ratingCodes = session.endpointCandidates
             .filter { !it.canaryOnly }
@@ -169,8 +177,8 @@ object EndpointSelector {
     fun profileFromCandidate(
         session: BackendVpnSession,
         candidate: BackendEndpointCandidate,
-    ): VlessProfile =
-        VlessProfile(
+    ): VlessProfile {
+        val profile = VlessProfile(
             remark = "Noki ${candidate.locationName.ifBlank { session.locationName }}",
             endpointCode = candidate.code,
             proxyType = candidate.proxyType.ifBlank { session.proxyType },
@@ -194,6 +202,22 @@ object EndpointSelector {
             spiderX = "/",
             youtubeCascade = session.youtubeCascade,
         )
+        val multiHop = session.multiHop ?: return profile
+        require(session.routeMode == "multihop" && candidate.nodeId == multiHop.exitNodeId) {
+            "multihop_exit_mismatch"
+        }
+        val relay = profileFromCandidate(
+            session.copy(routeMode = "direct", multiHop = null, youtubeCascade = null), multiHop.entry,
+        ).copy(flow = "", multiHop = null, youtubeCascade = null)
+        return profile.copy(multiHop = MultiHopRuntime(
+            selection = multiHop.selection,
+            entryNodeId = multiHop.entry.nodeId ?: throw IllegalArgumentException("multihop_entry_missing"),
+            exitNodeId = multiHop.exitNodeId,
+            relay = relay,
+            policyHash = multiHop.policyHash,
+            policyExpiresAtEpochMillis = multiHop.policyExpiresAtEpochMillis,
+        ))
+    }
 
     private fun profileFromLegacySession(session: BackendVpnSession): VlessProfile =
         VlessProfile(

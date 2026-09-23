@@ -4,6 +4,7 @@ object RuntimeProfilePolicy {
     fun profileAfterServerSelection(profile: VlessProfile): VlessProfile = profile.withoutRuntimeCredentials()
 
     fun normalize(settings: StoredSettings): StoredSettings {
+        if (settings.advancedSettings.multiHop.enabled) return settings
         return settings.copy(
             profile = profileAfterProtocolChange(
                 profile = settings.profile,
@@ -60,10 +61,13 @@ object RuntimeProfilePolicy {
             publicKey = "",
             shortId = "",
             flow = "",
+            youtubeCascade = null,
+            multiHop = null,
         )
     }
 
     fun isCachedProfileUsable(settings: StoredSettings): Boolean {
+        if (settings.advancedSettings.multiHop.enabled) return false
         val endpointCode = settings.profile.endpointCode.trim()
         if (endpointCode.isBlank()) return false
         if (settings.endpointOptions.none { it.code == endpointCode }) return false
@@ -81,6 +85,8 @@ object RuntimeProfilePolicy {
             publicKey = "",
             shortId = "",
             flow = "",
+            youtubeCascade = null,
+            multiHop = null,
         )
     }
 }

@@ -5,11 +5,26 @@ import com.noki.vpn.data.StoredSettings
 import com.noki.vpn.data.AppFilterMode
 import com.noki.vpn.data.DefaultStoredSettingsFactory
 import com.noki.vpn.data.SettingsAtomicUpdate
+import com.noki.vpn.data.MultiHopSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VpnSettingsTransactionPolicyTest {
+    @Test
+    fun changingMultiHopIntentMakesInFlightDirectCandidateStale() {
+        val baseline = DefaultStoredSettingsFactory.create()
+        val latest = baseline.copy(advancedSettings = baseline.advancedSettings.copy(
+            multiHop = MultiHopSettings(enabled = true),
+        ))
+        val outcome = VpnSettingsTransactionPolicy.commitRuntimeCandidate(
+            baseline, baseline, baseline, VpnSettingsTransactionPolicy.Result.Accepted, latest,
+        )
+        assertTrue(outcome.candidateStale)
+        assertTrue(outcome.requiresFreshPrepare)
+        assertEquals(latest.advancedSettings.multiHop, outcome.persisted.advancedSettings.multiHop)
+    }
+
     @Test
     fun `commit decides and writes against latest stored settings atomically`() {
         val baseline = DefaultStoredSettingsFactory.create()

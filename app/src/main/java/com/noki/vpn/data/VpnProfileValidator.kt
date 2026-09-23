@@ -30,11 +30,26 @@ object VpnProfileValidator {
         selectedLocationCode: String,
         endpointOptions: List<VpnEndpointOption>,
     ): String? {
-        val expectedSecurity = advancedSettings.protocol.name.lowercase(Locale.ROOT)
+        val multiHop = profile.multiHop
+        if (advancedSettings.multiHop.enabled) {
+            if (multiHop == null || multiHop.selection != advancedSettings.multiHop) return "multihop_runtime_missing"
+            if (multiHop.entryNodeId == multiHop.exitNodeId || multiHop.policyExpiresAtEpochMillis <= System.currentTimeMillis()) {
+                return "multihop_policy_expired"
+            }
+            if (profile.proxyType != "vless" || profile.transport != "tcp" || profile.security != "reality"
+                || multiHop.relay.proxyType != "vless" || multiHop.relay.transport != "tcp"
+                || multiHop.relay.security != "reality" || multiHop.relay.multiHop != null
+                || multiHop.relay.youtubeCascade != null
+                || runCatching { UUID.fromString(multiHop.relay.uuid) }.isFailure
+                || !EndpointSecurityPolicy.isAllowedProfile(multiHop.relay)) return "multihop_transport_unsupported"
+        } else if (multiHop != null) {
+            return "multihop_runtime_unexpected"
+        }
+        val expectedSecurity = if (advancedSettings.multiHop.enabled) "auto" else advancedSettings.protocol.name.lowercase(Locale.ROOT)
         val normalizedSecurity = profile.security.lowercase(Locale.ROOT)
         if (expectedSecurity != "auto" && normalizedSecurity != expectedSecurity) return "protocol_mismatch"
 
-        if (advancedSettings.endpointSelectionMode == EndpointSelectionMode.MANUAL) {
+        if (!advancedSettings.multiHop.enabled && advancedSettings.endpointSelectionMode == EndpointSelectionMode.MANUAL) {
             val manualGroupKey = EndpointGroupPolicy.resolveManualGroupKey(
                 settings = advancedSettings,
                 endpointOptions = endpointOptions,

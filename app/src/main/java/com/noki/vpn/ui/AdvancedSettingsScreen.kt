@@ -60,6 +60,7 @@ fun AdvancedSettingsScreen(
     onAppFilterClicked: () -> Unit = {},
     onAlwaysOnRulesClicked: () -> Unit = {},
     onBypassRulesClicked: () -> Unit = {},
+    onMultiHopClicked: () -> Unit = {},
 ) {
     CompositionLocalProvider(LocalTextStyle provides AdvancedNoFontPaddingTextStyle) {
         BoxWithConstraints(
@@ -84,8 +85,8 @@ fun AdvancedSettingsScreen(
                     showProtocolNotice = false
                 }
             }
-            LaunchedEffect(state.isAuthenticated, state.userProfile.selectedCountryCode) {
-                if (state.isAuthenticated) {
+            LaunchedEffect(state.isAuthenticated, state.userProfile.selectedCountryCode, state.advancedSettings.multiHop.enabled) {
+                if (state.isAuthenticated && !state.advancedSettings.multiHop.enabled) {
                     viewModel.refreshEndpointOptions(context)
                 }
             }
@@ -137,7 +138,7 @@ fun AdvancedSettingsScreen(
 
                 Spacer(modifier = Modifier.height(metrics.dp(20f)))
 
-                AdvancedToggleCard(
+                if (!state.advancedSettings.multiHop.enabled) AdvancedToggleCard(
                     enabled = autoEndpointSelection,
                     title = tr(language, "Автовыбор протокола", "Auto protocol selection"),
                     backdrop = surfaceBackdrop,
@@ -154,7 +155,7 @@ fun AdvancedSettingsScreen(
                     },
                 )
 
-                if (!autoEndpointSelection) {
+                if (!autoEndpointSelection && !state.advancedSettings.multiHop.enabled) {
                     Spacer(modifier = Modifier.height(metrics.dp(25f)))
 
                     AdvancedManualProtocolCard(
@@ -175,6 +176,15 @@ fun AdvancedSettingsScreen(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(metrics.dp(25f)))
+                AdvancedSmallButton(
+                    text = if (state.advancedSettings.multiHop.enabled) "MultiHop ✓" else "MultiHop",
+                    modifier = Modifier.widthIn(max = metrics.dp(370f)).fillMaxWidth().height(metrics.dp(76f)),
+                    backdrop = surfaceBackdrop,
+                    liveGlassEnabled = liveGlassEnabled,
+                    glassEnabled = true,
+                    onClick = onMultiHopClicked,
+                )
                 Spacer(modifier = Modifier.height(metrics.dp(25f)))
                 AdvancedToggleCard(
                     enabled = state.advancedSettings.killSwitchEnabled,

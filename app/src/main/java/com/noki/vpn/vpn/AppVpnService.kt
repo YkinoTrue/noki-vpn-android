@@ -669,6 +669,14 @@ class AppVpnService : VpnService() {
             serverCountry = notificationServerLabel,
             connectionSuccess = false,
         )
+        val desired = repository.load()
+        if (desired.advancedSettings.multiHop.enabled &&
+            (activeSettings?.advancedSettings?.multiHop != desired.advancedSettings.multiHop ||
+                activeSettings?.let { VpnProfileValidator.isUsable(it) } != true)
+        ) {
+            failClosedAfterReplacementFailure(repository, desired, reason)
+            return
+        }
         if (currentState == VpnConnectionState.CONNECTED && tunnel != null) {
             broadcastState(VpnConnectionState.CONNECTED)
             updateActiveNotification()
@@ -1488,7 +1496,11 @@ class AppVpnService : VpnService() {
             health = failedHealth,
         )
 
-        if (!rollbackOnFailure) {
+        val desiredSelectionChanged = VpnSettingsTransactionPolicy.candidateBecameStale(
+            previousSettings, repository.load(),
+        )
+        if (!rollbackOnFailure || desiredSelectionChanged ||
+            (previousSettings.advancedSettings.multiHop.enabled && !VpnProfileValidator.isUsable(previousSettings))) {
             broadcastState(
                 VpnConnectionState.FAILED,
                 checkNotNull(VpnReadinessPolicy.failureReason(nextStarted, nextReadiness)).code,
@@ -1946,6 +1958,7 @@ class AppVpnService : VpnService() {
         settings: StoredSettings,
         owner: RuntimeOwner,
     ): CancelableTask? {
+        if (settings.advancedSettings.multiHop.enabled) return null
         if (settings.advancedSettings.endpointSelectionMode != EndpointSelectionMode.AUTO) return null
         val endpointCode = settings.profile.endpointCode
         val underlaySignature = connectionOrchestrator.currentUnderlaySignature() ?: return null

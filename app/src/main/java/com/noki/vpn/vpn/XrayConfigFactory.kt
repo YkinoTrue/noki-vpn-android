@@ -13,13 +13,22 @@ object XrayConfigFactory {
         profile: VlessProfile,
         advancedSettings: AdvancedSettings,
     ): String {
-        val proxyOutbound = proxyOutbound(profile)
         val normalizedAdvancedSettings = DomainRulePolicy.normalizeSettings(advancedSettings)
+        require(normalizedAdvancedSettings.multiHop.enabled || profile.multiHop == null) { "multihop_runtime_unexpected" }
+        val multiHop = profile.multiHop.takeIf { normalizedAdvancedSettings.multiHop.enabled }
+        if (normalizedAdvancedSettings.multiHop.enabled) {
+            require(multiHop != null && multiHop.selection == normalizedAdvancedSettings.multiHop) {
+                "multihop_runtime_missing"
+            }
+        }
         val youtubeDirectDpiEnabled = normalizedAdvancedSettings.youtubeDirectDpiEnabled
-        val youtubeCascade = profile.youtubeCascade.takeIf { youtubeDirectDpiEnabled }
-        val russianResourcesEnabled = normalizedAdvancedSettings.bypassDomains
+        val youtubeCascade = profile.youtubeCascade?.takeIf { youtubeDirectDpiEnabled &&
+            (multiHop == null || it.host.split('.').let { parts ->
+                parts.size == 4 && parts.all { part -> part.toIntOrNull()?.let { value -> value in 0..255 } == true }
+            }) }
+        val russianResourcesEnabled = multiHop == null && normalizedAdvancedSettings.bypassDomains
             .contains(DomainRulePolicy.RUSSIAN_RESOURCES_RULE)
-        val bypassDomains = normalizedAdvancedSettings.bypassDomains
+        val bypassDomains = normalizedAdvancedSettings.bypassDomains.takeIf { multiHop == null }.orEmpty()
             .filterNot { it == DomainRulePolicy.RUSSIAN_RESOURCES_RULE }
         val destinationOverrides = JSONArray()
             .put("http")
@@ -111,13 +120,11 @@ object XrayConfigFactory {
                     .put("network", "tcp")
                     .put("outboundTag", "block"),
             )
-            .put(
-                JSONObject()
-                    .put("type", "field")
-                    .put("domain", JSONArray().put("domain:googleapis.cn"))
-                    .put("outboundTag", "direct"),
-            )
-            .put(
+        if (multiHop == null) rules.put(
+            JSONObject().put("type", "field")
+                .put("domain", JSONArray().put("domain:googleapis.cn"))
+                .put("outboundTag", "direct"),
+        ).put(
                 JSONObject()
                     .put("type", "field")
                     .put(
@@ -137,7 +144,7 @@ object XrayConfigFactory {
                     .put("outboundTag", "direct"),
             )
 
-        if (youtubeCascade != null) {
+        if (youtubeDirectDpiEnabled) {
             rules
                 .put(
                     JSONObject()
@@ -152,7 +159,7 @@ object XrayConfigFactory {
                         .put("type", "field")
                         .put("domain", JSONArray().put("geosite:youtube"))
                         .put("network", "tcp")
-                        .put("outboundTag", "youtube-ru-cascade"),
+                        .put("outboundTag", if (youtubeCascade != null) "youtube-ru-cascade" else "block"),
                 )
         }
 
@@ -193,8 +200,7 @@ object XrayConfigFactory {
             )
         }
 
-        val outbounds = JSONArray()
-            .put(proxyOutbound)
+        val outbounds = transportOutbounds(profile)
             .put(directOutbound)
             .put(blockOutbound)
             .apply {
@@ -265,8 +271,24 @@ object XrayConfigFactory {
                             .put("statsOutboundDownlink", false),
                     ),
             )
-            .put("outbounds", JSONArray().put(proxyOutbound(profile)))
+            .put("outbounds", transportOutbounds(profile))
             .toString(2)
+    }
+
+    private fun transportOutbounds(profile: VlessProfile): JSONArray {
+        profile.multiHop?.let { requireMultiHopTransport(profile, it.relay) }
+        return JSONArray()
+            .put(proxyOutbound(profile, dialerProxy = profile.multiHop?.let { "multihop-relay" }))
+            .apply {
+                profile.multiHop?.let { put(proxyOutbound(it.relay, tag = "multihop-relay")) }
+            }
+    }
+
+    private fun requireMultiHopTransport(exit: VlessProfile, relay: VlessProfile) {
+        require(exit.proxyType == "vless" && relay.proxyType == "vless"
+            && exit.transport == "tcp" && relay.transport == "tcp"
+            && exit.security == "reality" && relay.security == "reality"
+            && relay.multiHop == null && relay.youtubeCascade == null) { "multihop_transport_unsupported" }
     }
 
     private fun normalizeTransport(value: String): String {

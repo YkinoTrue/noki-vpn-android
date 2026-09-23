@@ -14,6 +14,30 @@ import org.robolectric.annotation.Config
 @Config(sdk = [28])
 class VpnSessionCoordinatorTest {
     @Test
+    fun `multiHop forwards pair without catalog probes or direct retry`() = runBlocking {
+        val selection = MultiHopSettings(true,
+            HopSelection(ServerSelectionMode.COUNTRY, countryCode = "RU"),
+            HopSelection(ServerSelectionMode.SERVER, nodeId = "exit-node"))
+        val api = FakeVpnSessionApi(sessionError = BackendException("route pending", 409))
+        var prechecks = 0
+        val coordinator = VpnSessionCoordinator(
+            context = RuntimeEnvironment.getApplication(), repository = FakeVpnSessionStore(), backendApi = api,
+            deviceNameProvider = { "Phone" }, challengeSigner = { "signature" },
+            startupTcpPrecheck = { prechecks++; true },
+        )
+        val settings = DefaultStoredSettingsFactory.create().copy(
+            backendDeviceId = "device-id", backendDeviceKey = "device-key",
+            advancedSettings = AdvancedSettings(multiHop = selection),
+        )
+        assertTrue(runCatching { coordinator.prepare("token", settings) }.isFailure)
+        assertEquals(0, api.catalogRequests)
+        assertEquals(0, prechecks)
+        assertEquals(selection, api.multiHopRequest)
+        assertNull(api.countryCode)
+        assertEquals(1, api.requests.size)
+    }
+
+    @Test
     fun `manual catalog requests all protocols without changing selected settings`() = runBlocking {
         val candidates = listOf(
             tcpCandidate("reality").copy(security = "reality", publicKey = "public", shortId = "abcd"),
@@ -236,8 +260,10 @@ class VpnSessionCoordinatorTest {
         private val sessionError: BackendException? = null,
         private val candidates: List<BackendEndpointCandidate> = emptyList(),
     ) : VpnSessionApi {
+        var catalogRequests = 0
         override suspend fun serverLocations(token: String, deviceId: String?, deviceKey: String?): List<BackendLocation> =
             listOf("DE" to "de-2", "LV" to "lv2").map { (country, location) ->
+                catalogRequests++
                 BackendLocation(location, location, country, null, null, "node.example", country, true,
                     null, null, null, null, null,
                     servers = listOf(VpnServer("node-$location", country, country, location, "node.example", null, true)))
@@ -246,6 +272,7 @@ class VpnSessionCoordinatorTest {
         var locationCode: String? = null
         var nodeId: String? = null
         var requestedProfileCode: String? = null
+        var multiHopRequest: MultiHopSettings? = null
         val requests = mutableListOf<Pair<String?, String?>>()
 
         override suspend fun vpnAccess(
@@ -280,13 +307,15 @@ class VpnSessionCoordinatorTest {
             excludeLocationCode: String?,
             profileCode: String,
             nodeId: String?,
+            multiHop: MultiHopSettings?,
         ): BackendVpnSession {
-            sessionError?.let { throw it }
             this.countryCode = countryCode
             this.locationCode = locationCode
             this.nodeId = nodeId
             requestedProfileCode = profileCode
+            multiHopRequest = multiHop
             requests += countryCode to locationCode
+            sessionError?.let { throw it }
             if (rejectCountryRequest && countryCode != null && locationCode == null) {
                 throw BackendException("Location not found", 503)
             }

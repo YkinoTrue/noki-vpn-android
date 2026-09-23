@@ -282,6 +282,7 @@ internal fun AppUiRuntime.refreshClientLatenciesAsync(
     locations: List<ServerLocation>,
     refreshCached: Boolean = false,
 ) {
+    if (uiState.advancedSettings.multiHop.enabled) return
     val attempt = authSessionCoordinator.attempt() ?: return
     val networkSignature = clientLatencySampler.networkSignature()
     val target = clientLatencyRequestTarget(locations)
@@ -304,6 +305,7 @@ internal fun AppUiRuntime.refreshClientLatenciesAsync(
         try {
             val measured = measureClientLatencies(locations)
             if (
+                uiState.advancedSettings.multiHop.enabled ||
                 clientLatencySampler.networkSignature() != networkSignature ||
                 clientLatencyRefreshJob !== ownerJob ||
                 !ownerJob.isActive ||

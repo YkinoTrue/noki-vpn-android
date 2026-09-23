@@ -21,6 +21,7 @@ internal object PrimaryNavigationPolicy {
         AppDestination.SETTINGS,
         AppDestination.PLANS,
         AppDestination.ADVANCED_SETTINGS,
+        AppDestination.MULTIHOP,
         AppDestination.APP_FILTER,
         AppDestination.SITE_RULES_ALWAYS_ON,
         AppDestination.SITE_RULES_BYPASS,

@@ -43,6 +43,7 @@ enum class AppDestination {
     SETTINGS,
     PLANS,
     ADVANCED_SETTINGS,
+    MULTIHOP,
     APP_FILTER,
     SITE_RULES_ALWAYS_ON,
     SITE_RULES_BYPASS,

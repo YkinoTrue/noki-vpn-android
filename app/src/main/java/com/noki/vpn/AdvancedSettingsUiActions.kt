@@ -9,6 +9,7 @@ import com.noki.vpn.data.VpnConnectionState
 import com.noki.vpn.data.VpnEndpointOption
 import com.noki.vpn.data.VpnProtocol
 import com.noki.vpn.data.VpnSessionCoordinator
+import com.noki.vpn.data.MultiHopSettings
 import com.noki.vpn.vpn.AppVpnService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -80,6 +81,27 @@ internal fun AppUiRuntime.setYoutubeDirectDpiEnabled(enabled: Boolean) {
     applyAppRoutingSettings()
 }
 
+internal fun AppUiRuntime.setMultiHop(settings: MultiHopSettings) {
+    if (uiState.advancedSettings.multiHop == settings) return
+    val previousLatencyJob = clientLatencyRefreshJob
+    previousLatencyJob?.cancel()
+    clientLatencyRefreshJob = null
+    clientLatencyRefreshTarget = null
+    clientLatencyRefreshNetworkSignature = null
+    val next = uiState.copy(advancedSettings = uiState.advancedSettings.copy(multiHop = settings))
+    val persisted = settingsMutationCoordinator.persistUiFields(next)
+    uiState = withFreeTrafficLimitNotice(next.copy(
+        profile = persisted.profile,
+        endpointOptions = persisted.endpointOptions,
+    ))
+    if (uiState.connectionState == VpnConnectionState.CONNECTED ||
+        uiState.connectionState == VpnConnectionState.CONNECTING
+    ) scope.launch {
+        previousLatencyJob?.join()
+        if (uiState.advancedSettings.multiHop == settings) vpnCommands.restart()
+    }
+}
+
 internal fun AppUiRuntime.toggleBiometric(enabled: Boolean) {
     applyAndPersist(AdvancedSettingsStateReducer.setBiometric(uiState, enabled))
 }
@@ -93,12 +115,14 @@ internal fun AppUiRuntime.toggleProtectNewDevices(enabled: Boolean) {
 }
 
 internal fun AppUiRuntime.changeProtocol(protocol: VpnProtocol) {
+    if (uiState.advancedSettings.multiHop.enabled) return
     val next = AdvancedSettingsStateReducer.changeProtocol(uiState, protocol)
     val persisted = settingsMutationCoordinator.persistProtocolChange(next, protocol)
     uiState = withFreeTrafficLimitNotice(next.copy(profile = persisted.profile))
 }
 
 internal fun AppUiRuntime.toggleAutoEndpointSelection(enabled: Boolean) {
+    if (uiState.advancedSettings.multiHop.enabled) return
     val next = AdvancedSettingsStateReducer.setAutoEndpointSelection(uiState, enabled)
     val persisted = settingsMutationCoordinator.persistAutoEndpointSelection(next)
     uiState = withFreeTrafficLimitNotice(next.copy(profile = persisted.profile))
@@ -115,6 +139,7 @@ internal fun AppUiRuntime.refreshEndpointOptions(
     context: Context,
     force: Boolean = false,
 ) {
+    if (uiState.advancedSettings.multiHop.enabled) return
     val attempt = authSessionCoordinator.attempt() ?: return
     val selectedCountryCode = uiState.userProfile.selectedCountryCode
     val selectedMode = uiState.userProfile.serverSelectionMode
@@ -201,6 +226,7 @@ internal fun AppUiRuntime.refreshEndpointOptions(
 }
 
 internal fun AppUiRuntime.selectManualEndpoint(option: VpnEndpointOption) {
+    if (uiState.advancedSettings.multiHop.enabled) return
     if (!isManualEndpointSelectable(
             option = option,
             endpointOptions = uiState.endpointOptions,

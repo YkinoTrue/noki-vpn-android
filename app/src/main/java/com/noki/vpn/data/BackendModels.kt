@@ -254,6 +254,16 @@ data class BackendVpnSession(
     val endpointCandidates: List<BackendEndpointCandidate>,
     val connectIp: String? = null,
     val youtubeCascade: YoutubeCascadeProfile? = null,
+    val routeMode: String = "direct",
+    val multiHop: BackendMultiHopSession? = null,
+)
+
+data class BackendMultiHopSession(
+    val entry: BackendEndpointCandidate,
+    val selection: MultiHopSettings,
+    val exitNodeId: String,
+    val policyHash: String,
+    val policyExpiresAtEpochMillis: Long,
 )
 
 data class BackendTemporaryVpnChallenge(

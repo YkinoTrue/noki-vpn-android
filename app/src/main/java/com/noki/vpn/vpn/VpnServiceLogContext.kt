@@ -5,6 +5,15 @@ import com.noki.vpn.data.StoredSettings
 
 internal object VpnServiceLogContext {
     fun serverLabel(settings: StoredSettings): String {
+        if (settings.advancedSettings.multiHop.enabled) {
+            val runtime = settings.profile.multiHop
+            if (runtime != null) {
+                val entry = runtime.relay.remark.removePrefix("Noki ").ifBlank { "Entry" }
+                val exit = settings.profile.remark.removePrefix("Noki ").ifBlank { "Exit" }
+                return "$entry → $exit"
+            }
+            return "MultiHop"
+        }
         return serverLabel(
             selectedServerCode = settings.userProfile.selectedServerCode,
             remark = settings.profile.remark,

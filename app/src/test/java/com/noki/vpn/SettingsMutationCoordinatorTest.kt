@@ -8,6 +8,8 @@ import com.noki.vpn.data.DefaultStoredSettingsFactory
 import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.GlassMode
 import com.noki.vpn.data.HomeLayoutVariant
+import com.noki.vpn.data.HopSelection
+import com.noki.vpn.data.MultiHopSettings
 import com.noki.vpn.data.InMemoryAtomicStoredSettingsStore
 import com.noki.vpn.data.SecuritySettings
 import com.noki.vpn.data.StoredSettings
@@ -19,6 +21,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SettingsMutationCoordinatorTest {
+    @Test
+    fun multiHopIntentChangeClearsOldRuntimeAndKeepsDirectPreference() {
+        val latest = authenticatedSettings().copy(
+            profile = VlessProfile(endpointCode = "direct", uuid = "old-runtime"),
+            endpointOptions = listOf(VpnEndpointOption(code = "direct")),
+        )
+        val store = InMemoryAtomicStoredSettingsStore(latest)
+        val selection = MultiHopSettings(true,
+            HopSelection(com.noki.vpn.data.ServerSelectionMode.COUNTRY, countryCode = "RU"),
+            HopSelection(com.noki.vpn.data.ServerSelectionMode.COUNTRY, countryCode = "LV"))
+        val state = stateFrom(latest).copy(advancedSettings = latest.advancedSettings.copy(multiHop = selection))
+        val saved = SettingsMutationCoordinator(store).persistUiFields(state)
+        assertEquals(selection, saved.advancedSettings.multiHop)
+        assertEquals("", saved.profile.uuid)
+        assertEquals(emptyList<VpnEndpointOption>(), saved.endpointOptions)
+        assertEquals(latest.userProfile.selectedCountryCode, saved.userProfile.selectedCountryCode)
+    }
+
     @Test
     fun nodeAndAutoSelectionInvalidateRuntimeWithoutErasingManualCountry() {
         val latest = authenticatedSettings().copy(

@@ -68,15 +68,17 @@ internal class SettingsMutationCoordinator(
         protocol: VpnProtocol,
     ): StoredSettings {
         return store.updateSettings { latest ->
-            latest.withUiFields(state).copy(
-                profile = RuntimeProfilePolicy.profileAfterProtocolChange(latest.profile, protocol),
+            val updated = latest.withUiFields(state)
+            updated.copy(
+                profile = RuntimeProfilePolicy.profileAfterProtocolChange(updated.profile, protocol),
             )
         }
     }
 
     fun persistAutoEndpointSelection(state: AppUiState): StoredSettings {
         return store.updateSettings { latest ->
-            latest.withUiFields(state).copy(profile = latest.profile.copy(uuid = ""))
+            val updated = latest.withUiFields(state)
+            updated.copy(profile = updated.profile.copy(uuid = ""))
         }
     }
 
@@ -85,8 +87,9 @@ internal class SettingsMutationCoordinator(
         option: VpnEndpointOption,
     ): StoredSettings {
         return store.updateSettings { latest ->
-            latest.withUiFields(state).copy(
-                profile = RuntimeProfilePolicy.profileForManualEndpoint(latest.profile, option),
+            val updated = latest.withUiFields(state)
+            updated.copy(
+                profile = RuntimeProfilePolicy.profileForManualEndpoint(updated.profile, option),
             )
         }
     }
@@ -98,5 +101,11 @@ internal class SettingsMutationCoordinator(
             personalizationSettings = state.personalizationSettings,
             securitySettings = state.securitySettings,
             advancedSettings = state.advancedSettings,
-        )
+        ).let { updated ->
+            if (advancedSettings.multiHop == state.advancedSettings.multiHop) updated
+            else updated.copy(
+                profile = RuntimeProfilePolicy.profileAfterServerSelection(profile),
+                endpointOptions = emptyList(),
+            )
+        }
 }
