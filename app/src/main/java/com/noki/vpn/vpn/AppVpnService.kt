@@ -998,6 +998,7 @@ class AppVpnService : VpnService() {
                 endpointCode = attemptSettings.profile.endpointCode,
                 success = false,
                 networkKind = activeEndpointNetworkKind,
+                route = attemptSettings.profile.multiHop,
             )
             val failedSettings = attemptSettings
             val failedNetworkKind = activeEndpointNetworkKind
@@ -1020,7 +1021,9 @@ class AppVpnService : VpnService() {
                     context = this@AppVpnService,
                     session = fallbackSession.copy(endpointCandidates = remaining),
                     settings = settings.advancedSettings,
-                    endpointHealth = repository.loadEndpointHealth(activeEndpointNetworkKind),
+                    endpointHealth = attemptSettings.profile.multiHop?.let {
+                        repository.loadEndpointHealth(activeEndpointNetworkKind, it)
+                    } ?: repository.loadEndpointHealth(activeEndpointNetworkKind),
                     rotationIndex = repository::nextEndpointRotationIndex,
                     networkKind = activeEndpointNetworkKind,
                 )
@@ -1037,6 +1040,10 @@ class AppVpnService : VpnService() {
                 )
                 attemptSettings = nextSettings
                 continue
+            }
+            if (settings.advancedSettings.multiHop.enabled) {
+                failClosedAfterReplacementFailure(repository, attemptSettings, failureReason)
+                return@withLifecycleLock
             }
             val failedNodeId = fallbackSession?.endpointCandidates?.firstOrNull { it.code == attemptSettings.profile.endpointCode }?.nodeId
             if (failedNodeId != null) excludedNodeIds += failedNodeId
@@ -1484,6 +1491,7 @@ class AppVpnService : VpnService() {
             endpointCode = settings.profile.endpointCode,
             success = false,
             networkKind = activeEndpointNetworkKind,
+            route = settings.profile.multiHop,
         )
         recordEndpointHealthEvent(
             repository = repository,
@@ -1627,6 +1635,7 @@ class AppVpnService : VpnService() {
                 success = true,
                 latencyMs = readinessLatencyMs,
                 networkKind = activeEndpointNetworkKind,
+                route = connectedSettings.profile.multiHop,
             )
             recordEndpointHealthEvent(
                 repository = repository,
@@ -1763,7 +1772,8 @@ class AppVpnService : VpnService() {
                     settings = settings,
                     endpointCode = settings.profile.endpointCode,
                     networkKind = activeEndpointNetworkKind,
-                    health = repository.loadEndpointHealth(activeEndpointNetworkKind)[settings.profile.endpointCode],
+                    health = (settings.profile.multiHop?.let { repository.loadEndpointHealth(activeEndpointNetworkKind, it) }
+                        ?: repository.loadEndpointHealth(activeEndpointNetworkKind))[settings.profile.endpointCode],
                 )
             }
         }
@@ -1822,6 +1832,7 @@ class AppVpnService : VpnService() {
                             success = true,
                             latencyMs = latency,
                             networkKind = activeEndpointNetworkKind,
+                            route = settings.profile.multiHop,
                         )
                     }
                 }
@@ -2578,6 +2589,7 @@ class AppVpnService : VpnService() {
             endpointCode = settings.profile.endpointCode,
             success = false,
             networkKind = activeEndpointNetworkKind,
+            route = settings.profile.multiHop,
         )
         recordEndpointHealthEvent(
             repository = repository,
@@ -2789,7 +2801,7 @@ class AppVpnService : VpnService() {
         settings: StoredSettings,
     ): String {
         val codes = settings.endpointOptions.map { it.code }.ifEmpty { listOf(settings.profile.endpointCode) }
-        return repository.endpointRatingSnapshot(codes, activeEndpointNetworkKind)
+        return repository.endpointRatingSnapshot(codes, activeEndpointNetworkKind, settings.profile.multiHop)
     }
 
     private fun createNotification(

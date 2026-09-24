@@ -33,15 +33,12 @@ object VpnProfileValidator {
         val multiHop = profile.multiHop
         if (advancedSettings.multiHop.enabled) {
             if (multiHop == null || multiHop.selection != advancedSettings.multiHop) return "multihop_runtime_missing"
-            if (multiHop.entryNodeId == multiHop.exitNodeId || multiHop.policyExpiresAtEpochMillis <= System.currentTimeMillis()) {
-                return "multihop_policy_expired"
+            if (multiHop.version != 2 || multiHop.entryNodeId.isBlank() || multiHop.exitNodeId.isBlank()
+                || multiHop.entryNodeId == multiHop.exitNodeId
+                || !multiHop.policyHash.matches(Regex("[0-9a-f]{64}"))) return "multihop_policy_invalid"
+            if (profile.port.toIntOrNull() !in 20000..29999 || !EndpointSecurityPolicy.isAllowedProfile(profile)) {
+                return "multihop_transport_unsupported"
             }
-            if (profile.proxyType != "vless" || profile.transport != "tcp" || profile.security != "reality"
-                || multiHop.relay.proxyType != "vless" || multiHop.relay.transport != "tcp"
-                || multiHop.relay.security != "reality" || multiHop.relay.multiHop != null
-                || multiHop.relay.youtubeCascade != null
-                || runCatching { UUID.fromString(multiHop.relay.uuid) }.isFailure
-                || !EndpointSecurityPolicy.isAllowedProfile(multiHop.relay)) return "multihop_transport_unsupported"
         } else if (multiHop != null) {
             return "multihop_runtime_unexpected"
         }

@@ -276,19 +276,8 @@ object XrayConfigFactory {
     }
 
     private fun transportOutbounds(profile: VlessProfile): JSONArray {
-        profile.multiHop?.let { requireMultiHopTransport(profile, it.relay) }
         return JSONArray()
-            .put(proxyOutbound(profile, dialerProxy = profile.multiHop?.let { "multihop-relay" }))
-            .apply {
-                profile.multiHop?.let { put(proxyOutbound(it.relay, tag = "multihop-relay")) }
-            }
-    }
-
-    private fun requireMultiHopTransport(exit: VlessProfile, relay: VlessProfile) {
-        require(exit.proxyType == "vless" && relay.proxyType == "vless"
-            && exit.transport == "tcp" && relay.transport == "tcp"
-            && exit.security == "tls" && relay.security == "reality"
-            && relay.multiHop == null && relay.youtubeCascade == null) { "multihop_transport_unsupported" }
+            .put(proxyOutbound(profile))
     }
 
     private fun normalizeTransport(value: String): String {

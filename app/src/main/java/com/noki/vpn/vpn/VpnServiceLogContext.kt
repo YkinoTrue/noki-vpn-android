@@ -8,7 +8,7 @@ internal object VpnServiceLogContext {
         if (settings.advancedSettings.multiHop.enabled) {
             val runtime = settings.profile.multiHop
             if (runtime != null) {
-                val entry = runtime.relay.remark.removePrefix("Noki ").ifBlank { "Entry" }
+                val entry = runtime.entryNodeId.take(8)
                 val exit = settings.profile.remark.removePrefix("Noki ").ifBlank { "Exit" }
                 return "$entry → $exit"
             }

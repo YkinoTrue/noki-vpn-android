@@ -276,40 +276,21 @@ internal class StoredSettingsCodec(
     }
 
     private fun encodeMultiHopRuntime(runtime: MultiHopRuntime): JSONObject = JSONObject()
+        .put("version", runtime.version)
         .put("selection", encodeMultiHopSettings(runtime.selection))
         .put("entryNodeId", runtime.entryNodeId)
         .put("exitNodeId", runtime.exitNodeId)
         .put("policyHash", runtime.policyHash)
-        .put("policyExpiresAtEpochMillis", runtime.policyExpiresAtEpochMillis)
-        .put("relay", JSONObject()
-            .put("remark", runtime.relay.remark)
-            .put("endpointCode", runtime.relay.endpointCode)
-            .put("host", runtime.relay.host)
-            .put("port", runtime.relay.port)
-            .put("uuid", runtime.relay.uuid)
-            .put("serverName", runtime.relay.serverName)
-            .put("publicKey", runtime.relay.publicKey)
-            .put("shortId", runtime.relay.shortId)
-            .put("fingerprint", runtime.relay.fingerprint))
 
     private fun decodeMultiHopRuntime(json: JSONObject?): MultiHopRuntime? {
-        if (json == null) return null
-        val relay = json.optJSONObject("relay") ?: return null
+        if (json == null || json.optInt("version") != 2 || json.has("relay")) return null
         val selection = decodeMultiHopSettings(json.optJSONObject("selection"))
         return MultiHopRuntime(
             selection = selection,
             entryNodeId = json.optString("entryNodeId"),
             exitNodeId = json.optString("exitNodeId"),
             policyHash = json.optString("policyHash"),
-            policyExpiresAtEpochMillis = json.optLong("policyExpiresAtEpochMillis"),
-            relay = VlessProfile(
-                remark = relay.optString("remark", "Noki VPN"),
-                endpointCode = relay.optString("endpointCode"),
-                host = relay.optString("host"), port = relay.optString("port", "11443"),
-                uuid = relay.optString("uuid"), flow = "", security = "reality",
-                serverName = relay.optString("serverName"), publicKey = relay.optString("publicKey"),
-                shortId = relay.optString("shortId"), fingerprint = relay.optString("fingerprint", "chrome"),
-            ),
+            version = 2,
         )
     }
 

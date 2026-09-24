@@ -16,16 +16,15 @@ import org.junit.Test
 
 class XrayConfigFactoryTest {
     @Test
-    fun multiHopKeepsYoutubeLastAndProbeUsesSameRelay() {
+    fun multiHopUsesOneProxyOutboundAndKeepsYoutubeCascade() {
         val intent = MultiHopSettings(true,
             HopSelection(ServerSelectionMode.COUNTRY, countryCode = "RU"),
             HopSelection(ServerSelectionMode.COUNTRY, countryCode = "LV"))
-        val relay = validProfile().copy(host = "9.9.9.9", port = "11443", flow = "", youtubeCascade = null)
-        val exit = validProfile().copy(port = "9443", security = "tls", serverName = "lv1.example.com",
+        val exit = validProfile().copy(host = "9.9.9.9", port = "20000", security = "tls", serverName = "lv1.example.com",
             youtubeCascade = validProfile().youtubeCascade?.copy(host = "8.8.8.8"),
             multiHop = MultiHopRuntime(intent,
             "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002",
-            relay, "hash", System.currentTimeMillis() + 60_000))
+            "a".repeat(64)))
         val settings = AdvancedSettings(youtubeDirectDpiEnabled = true, multiHop = intent)
         val config = JSONObject(XrayConfigFactory.build(exit, settings))
         val outbounds = config.getJSONArray("outbounds")
@@ -33,15 +32,17 @@ class XrayConfigFactoryTest {
             .map(outbounds::getJSONObject).single { it.getString("tag") == tag }
         fun dialer(tag: String) = outbound(tag).getJSONObject("streamSettings")
             .getJSONObject("sockopt").getString("dialerProxy")
-        assertEquals("multihop-relay", dialer("proxy"))
+        assertEquals("9.9.9.9", outbound("proxy").getJSONObject("settings")
+            .getJSONArray("vnext").getJSONObject(0).getString("address"))
+        assertFalse(outbound("proxy").getJSONObject("streamSettings")
+            .optJSONObject("sockopt")?.has("dialerProxy") == true)
         assertEquals("tls", outbound("proxy").getJSONObject("streamSettings").getString("security"))
         assertEquals("proxy", dialer("youtube-ru-cascade"))
-        assertFalse(outbound("multihop-relay").getJSONObject("streamSettings")
-            .optJSONObject("sockopt")?.has("dialerProxy") == true)
+        assertFalse(outbounds.toString().contains("multihop-relay"))
         val probe = JSONObject(XrayConfigFactory.buildProbe(exit)).getJSONArray("outbounds")
-        assertEquals(2, probe.length())
-        assertEquals("multihop-relay", probe.getJSONObject(0).getJSONObject("streamSettings")
-            .getJSONObject("sockopt").getString("dialerProxy"))
+        assertEquals(1, probe.length())
+        assertFalse(probe.getJSONObject(0).getJSONObject("streamSettings")
+            .optJSONObject("sockopt")?.has("dialerProxy") == true)
     }
 
     @Test

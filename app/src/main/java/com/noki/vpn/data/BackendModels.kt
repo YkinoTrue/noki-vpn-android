@@ -259,11 +259,12 @@ data class BackendVpnSession(
 )
 
 data class BackendMultiHopSession(
-    val entry: BackendEndpointCandidate,
+    val version: Int,
     val selection: MultiHopSettings,
+    val entryNodeId: String,
     val exitNodeId: String,
+    val entryIp: String,
     val policyHash: String,
-    val policyExpiresAtEpochMillis: Long,
 )
 
 data class BackendTemporaryVpnChallenge(

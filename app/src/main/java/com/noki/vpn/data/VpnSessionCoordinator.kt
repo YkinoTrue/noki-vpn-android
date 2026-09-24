@@ -11,6 +11,8 @@ interface VpnSessionStore {
     fun loadEndpointHealth(): Map<String, EndpointHealth>
     fun loadEndpointHealth(networkKind: EndpointRankingPolicy.NetworkKind): Map<String, EndpointHealth> =
         loadEndpointHealth()
+    fun loadEndpointHealth(networkKind: EndpointRankingPolicy.NetworkKind, route: BackendMultiHopSession): Map<String, EndpointHealth> =
+        emptyMap()
     fun nextEndpointRotationIndex(rotationKey: String): Int
 }
 
@@ -122,7 +124,9 @@ class VpnSessionCoordinator(
         val networkKind = context?.let(EndpointSelector::currentNetworkKind)
             ?: EndpointRankingPolicy.NetworkKind.OTHER
         val multiHop = settings.advancedSettings.multiHop.enabled
-        val endpointHealth = if (multiHop) emptyMap() else repository.loadEndpointHealth(networkKind)
+        val endpointHealth = if (multiHop) {
+            deviceSession.session.multiHop?.let { repository.loadEndpointHealth(networkKind, it) }.orEmpty()
+        } else repository.loadEndpointHealth(networkKind)
         val tcpPrecheck = if (multiHop) null else startupTcpPrecheck ?: ::defaultStartupTcpPrecheck
         val selection = endpointSelectionProvider?.invoke(
             deviceSession.session,

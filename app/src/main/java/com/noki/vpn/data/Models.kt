@@ -85,9 +85,8 @@ data class MultiHopRuntime(
     val selection: MultiHopSettings,
     val entryNodeId: String,
     val exitNodeId: String,
-    val relay: VlessProfile,
     val policyHash: String,
-    val policyExpiresAtEpochMillis: Long,
+    val version: Int = 2,
 )
 
 enum class VpnConnectionState {

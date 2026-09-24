@@ -8,6 +8,23 @@ object EndpointHealthScope {
         endpointCode: String,
     ): String = "${networkKind.storageKey()}|${endpointCode.trim()}"
 
+    fun routeKey(
+        networkKind: EndpointRankingPolicy.NetworkKind,
+        runtime: MultiHopRuntime,
+        endpointCode: String,
+    ): String = "${networkKind.storageKey()}|mh|${runtime.entryNodeId}|${runtime.exitNodeId}|${endpointCode.trim()}"
+
+    fun forRoute(
+        raw: Map<String, EndpointHealth>,
+        networkKind: EndpointRankingPolicy.NetworkKind,
+        runtime: MultiHopRuntime,
+    ): Map<String, EndpointHealth> {
+        val prefix = "${networkKind.storageKey()}|mh|${runtime.entryNodeId}|${runtime.exitNodeId}|"
+        return raw.mapNotNull { (key, value) ->
+            if (key.startsWith(prefix)) key.removePrefix(prefix) to value else null
+        }.toMap()
+    }
+
     fun forNetwork(
         raw: Map<String, EndpointHealth>,
         networkKind: EndpointRankingPolicy.NetworkKind,

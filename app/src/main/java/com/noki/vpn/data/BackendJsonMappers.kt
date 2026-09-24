@@ -412,31 +412,28 @@ internal object BackendVpnSessionJsonParser {
             else -> throw IllegalArgumentException("multihop_selector_invalid")
         }
         val selection = json.getJSONObject("selection")
-        val entry = parseEndpointCandidate(json.getJSONObject("entry"))
+        val version = json.getInt("version")
+        val entryNodeId = json.getString("entry_node_id")
         val exitNodeId = json.getString("exit_node_id")
+        val entryIp = json.getString("entry_ip")
         val policyHash = json.getString("policy_hash")
-        val expiry = runCatching { java.time.Instant.parse(json.getString("policy_expires_at")).toEpochMilli() }
-            .recoverCatching { java.time.OffsetDateTime.parse(json.getString("policy_expires_at")).toInstant().toEpochMilli() }
-            .getOrElse { throw IllegalArgumentException("multihop_policy_expiry_invalid", it) }
-        require(entry.nodeId != null && entry.nodeId != exitNodeId && exitNodeId.isNotBlank()) {
+        require(version == 2 && entryNodeId.isNotBlank() && entryNodeId != exitNodeId && exitNodeId.isNotBlank()) {
             "multihop_nodes_invalid"
         }
-        require(entry.entryPort in 1..65535 && isPublicIpv4(entry.connectIp)) { "multihop_entry_invalid" }
-        require(entry.proxyType == "vless" && entry.security == "reality" && entry.transport == "tcp") {
-            "multihop_transport_unsupported"
-        }
+        require(isPublicIpv4(entryIp)) { "multihop_entry_invalid" }
         require(candidates.isNotEmpty() && candidates.all {
-            it.nodeId == exitNodeId && it.entryPort in 1..65535 && isPublicIpv4(it.connectIp)
-                && it.proxyType == "vless" && it.security == "reality" && it.transport == "tcp"
+            it.nodeId == exitNodeId && it.entryHost == entryIp && it.connectIp == entryIp
+                && it.entryPort in 20000..29999 && EndpointSecurityPolicy.isAllowedCandidate(it)
         }) { "multihop_exit_invalid" }
-        require(policyHash.matches(Regex("[0-9a-f]{64}")) && expiry > System.currentTimeMillis()) {
+        require(policyHash.matches(Regex("[0-9a-f]{64}"))) {
             "multihop_policy_invalid"
         }
         return BackendMultiHopSession(
-            entry = entry,
+            version = version,
             selection = MultiHopSettings(enabled = true,
                 entry = hop(selection.getJSONObject("entry")), exit = hop(selection.getJSONObject("exit"))),
-            exitNodeId = exitNodeId, policyHash = policyHash, policyExpiresAtEpochMillis = expiry,
+            entryNodeId = entryNodeId, exitNodeId = exitNodeId, entryIp = entryIp,
+            policyHash = policyHash,
         )
     }
 

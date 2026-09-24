@@ -98,12 +98,12 @@ object EndpointSelector {
             .filter { it.entryHost.isNotBlank() }
         val secure = withHost
             .filter(EndpointSecurityPolicy::isAllowedCandidate)
-        val matchingProtocol = secure.filter { matchesProtocol(it, settings.protocol) }
+        val matchingProtocol = if (settings.multiHop.enabled) secure else secure.filter { matchesProtocol(it, settings.protocol) }
         val candidates = matchingProtocol.filter { !it.canaryOnly }
         onDiagnostic("stage=candidates; received=${session.endpointCandidates.size}; with_host=${withHost.size}; security_allowed=${secure.size}; protocol_allowed=${matchingProtocol.size}; eligible=${candidates.size}; protocol=${settings.protocol}; mode=${settings.endpointSelectionMode}")
         if (candidates.isEmpty()) return null
         val network = networkKind ?: currentNetworkKind(context)
-        if (settings.endpointSelectionMode == EndpointSelectionMode.MANUAL) {
+        if (settings.endpointSelectionMode == EndpointSelectionMode.MANUAL && !settings.multiHop.enabled) {
             val manualCandidates = EndpointGroupPolicy.manualCandidates(candidates, settings)
             onDiagnostic("stage=manual_group; candidates=${manualCandidates.size}")
             if (startupTcpPrecheck != null) {
@@ -206,16 +206,12 @@ object EndpointSelector {
         require(session.routeMode == "multihop" && candidate.nodeId == multiHop.exitNodeId) {
             "multihop_exit_mismatch"
         }
-        val relay = profileFromCandidate(
-            session.copy(routeMode = "direct", multiHop = null, youtubeCascade = null), multiHop.entry,
-        ).copy(flow = "", multiHop = null, youtubeCascade = null)
         return profile.copy(multiHop = MultiHopRuntime(
             selection = multiHop.selection,
-            entryNodeId = multiHop.entry.nodeId ?: throw IllegalArgumentException("multihop_entry_missing"),
+            entryNodeId = multiHop.entryNodeId,
             exitNodeId = multiHop.exitNodeId,
-            relay = relay,
             policyHash = multiHop.policyHash,
-            policyExpiresAtEpochMillis = multiHop.policyExpiresAtEpochMillis,
+            version = multiHop.version,
         ))
     }
 

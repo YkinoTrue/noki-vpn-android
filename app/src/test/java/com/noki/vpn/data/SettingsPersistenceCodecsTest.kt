@@ -14,13 +14,11 @@ class SettingsPersistenceCodecsTest {
     private val settingsCodec = StoredSettingsCodec { defaults }
 
     @Test
-    fun `multiHop intent and runtime survive process storage round trip`() {
+    fun `multiHop intent and v2 runtime survive process storage round trip`() {
         val selection = MultiHopSettings(true,
             HopSelection(ServerSelectionMode.COUNTRY, countryCode = "RU"),
             HopSelection(ServerSelectionMode.SERVER, nodeId = "node-b"))
-        val runtime = MultiHopRuntime(selection, "node-a", "node-b",
-            VlessProfile(remark = "Noki Russia", host = "203.0.113.1", uuid = "relay-user"),
-            "hash", System.currentTimeMillis() + 30_000)
+        val runtime = MultiHopRuntime(selection, "node-a", "node-b", "a".repeat(64))
         val stored = defaults.copy(
             profile = defaults.profile.copy(multiHop = runtime),
             advancedSettings = defaults.advancedSettings.copy(multiHop = selection),
@@ -28,6 +26,10 @@ class SettingsPersistenceCodecsTest {
         val restored = settingsCodec.decode(settingsCodec.encode(stored))
         assertEquals(selection, restored.advancedSettings.multiHop)
         assertEquals(runtime, restored.profile.multiHop)
+        val legacy = settingsCodec.encode(stored).replace("\"version\":2", "\"version\":1")
+        val migrated = settingsCodec.decode(legacy)
+        assertEquals(selection, migrated.advancedSettings.multiHop)
+        assertNull(migrated.profile.multiHop)
     }
 
     @Test

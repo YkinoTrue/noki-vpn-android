@@ -366,7 +366,8 @@ class BackendApiClient(
                     ServerSelectionMode.AUTO -> throw IllegalArgumentException("multihop_selector_invalid")
                 }
             }
-            payload.put("multihop", JSONObject().put("entry", hop(multiHop.entry)).put("exit", hop(multiHop.exit)))
+            payload.put("multihop", JSONObject().put("version", 2)
+                .put("entry", hop(multiHop.entry)).put("exit", hop(multiHop.exit)))
         } else {
             payload.put("country_code", countryCode)
                 .put("location_code", locationCode)

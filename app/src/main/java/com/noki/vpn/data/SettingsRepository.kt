@@ -315,12 +315,28 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         }
     }
 
+    override fun loadEndpointHealth(
+        networkKind: EndpointRankingPolicy.NetworkKind,
+        route: BackendMultiHopSession,
+    ): Map<String, EndpointHealth> = loadEndpointHealth(networkKind, MultiHopRuntime(
+        selection = route.selection, entryNodeId = route.entryNodeId,
+        exitNodeId = route.exitNodeId, policyHash = route.policyHash,
+    ))
+
+    fun loadEndpointHealth(
+        networkKind: EndpointRankingPolicy.NetworkKind,
+        route: MultiHopRuntime,
+    ): Map<String, EndpointHealth> = synchronized(ENDPOINT_HEALTH_LOCK) {
+        EndpointHealthScope.forRoute(loadEndpointHealthLocked(), networkKind, route)
+    }
+
     fun recordEndpointResult(
         endpointCode: String,
         success: Boolean,
         slow: Boolean = false,
         latencyMs: Long? = null,
         networkKind: EndpointRankingPolicy.NetworkKind = EndpointRankingPolicy.NetworkKind.OTHER,
+        route: MultiHopRuntime? = null,
     ): EndpointHealth? {
         val code = endpointCode.trim()
         if (code.isBlank()) return null
@@ -328,8 +344,10 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
         synchronized(ENDPOINT_HEALTH_LOCK) {
             val health = loadEndpointHealthLocked().toMutableMap()
             val now = System.currentTimeMillis()
-            val key = EndpointHealthScope.key(networkKind, code)
-            val previous = health[key] ?: EndpointHealthScope.forNetwork(health, networkKind)[code] ?: EndpointHealth()
+            val key = route?.let { EndpointHealthScope.routeKey(networkKind, it, code) }
+                ?: EndpointHealthScope.key(networkKind, code)
+            val previous = health[key] ?: (if (route == null) EndpointHealthScope.forNetwork(health, networkKind)[code]
+                else EndpointHealthScope.forRoute(health, networkKind, route)[code]) ?: EndpointHealth()
             updated = EndpointRankingPolicy.updateAfterResult(
                 previous = previous,
                 success = success,
@@ -346,8 +364,10 @@ class SettingsRepository(private val context: Context) : VpnSessionStore, Endpoi
     fun endpointRatingSnapshot(
         endpointCodes: List<String>,
         networkKind: EndpointRankingPolicy.NetworkKind = EndpointRankingPolicy.NetworkKind.OTHER,
+        route: MultiHopRuntime? = null,
     ): String {
-        return EndpointRankingPolicy.ratingSnapshot(endpointCodes, loadEndpointHealth(networkKind))
+        return EndpointRankingPolicy.ratingSnapshot(endpointCodes,
+            if (route == null) loadEndpointHealth(networkKind) else loadEndpointHealth(networkKind, route))
     }
 
     override fun nextEndpointRotationIndex(rotationKey: String): Int {

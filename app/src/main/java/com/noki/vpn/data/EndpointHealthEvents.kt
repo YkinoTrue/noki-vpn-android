@@ -165,6 +165,10 @@ class EndpointHealthEventReporter(
         event: EndpointHealthEvent,
     ) {
         val current = currentSettings(settings) ?: return
+        if (settings.profile.multiHop != null || current.profile.multiHop != null) {
+            flush(settings)
+            return
+        }
         if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)) {
             flush(settings)
             return
@@ -217,6 +221,7 @@ class EndpointHealthEventReporter(
         health: EndpointHealth?,
     ) {
         val current = currentSettings(settings) ?: return
+        if (settings.profile.multiHop != null || current.profile.multiHop != null) return
         if (!AppDiagnosticLogPolicy.shouldUploadAutomatically(current.advancedSettings)) {
             flush(settings)
             return
