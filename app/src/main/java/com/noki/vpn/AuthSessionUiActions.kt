@@ -2,6 +2,7 @@ package com.noki.vpn
 
 import com.noki.vpn.data.BackendException
 import com.noki.vpn.data.PendingLogoutRevocationWorker
+import com.noki.vpn.data.WireGuardKeyStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -44,6 +45,15 @@ internal fun AppUiRuntime.logout() {
     avatarMutationJob = null
     staleAvatarMutation?.cancel()
     repository.clearAndroidUpdateAvailable()
+    runCatching { WireGuardKeyStore.android(application).clear() }
+        .onFailure { error ->
+            repository.recordAppLog(
+                category = "security",
+                level = "error",
+                message = "ru_wg_local_key_clear_failed",
+                errorType = error.javaClass.simpleName,
+            )
+        }
     authSessionCoordinator.clear()
     repository.clearAppNotificationHistory(notificationHistorySettings)
     FcmTokenRegistrar.cancelPendingRegistration(repository)

@@ -5,6 +5,7 @@ import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.PlanCode
 import com.noki.vpn.data.ServerSelectionMode
 import com.noki.vpn.data.MultiHopSettings
+import com.noki.vpn.data.RuRelaySelection
 
 object VpnSettingsTransactionPolicy {
     private data class SelectionKey(
@@ -17,6 +18,8 @@ object VpnSettingsTransactionPolicy {
         val serverSelectionMode: ServerSelectionMode,
         val nodeId: String,
         val multiHop: MultiHopSettings,
+        val ruRelaySelection: RuRelaySelection,
+        val ruRelaySelectionRevision: Long,
     )
 
     private fun StoredSettings.selectionKey() = SelectionKey(
@@ -29,6 +32,8 @@ object VpnSettingsTransactionPolicy {
         userProfile.serverSelectionMode,
         userProfile.selectedNodeId,
         advancedSettings.multiHop,
+        advancedSettings.ruRelaySelection,
+        ruRelaySelectionRevision,
     )
 
     data class RuntimeCommitOutcome(
@@ -39,6 +44,8 @@ object VpnSettingsTransactionPolicy {
     ) {
         val candidateStale: Boolean
             get() = result == Result.Accepted && desiredSelectionChanged
+        val acceptedForActivation: Boolean
+            get() = result == Result.Accepted && !desiredSelectionChanged
         val requiresFreshPrepare: Boolean
             get() = desiredSelectionChanged && (result == Result.Accepted || result == Result.RolledBack)
     }

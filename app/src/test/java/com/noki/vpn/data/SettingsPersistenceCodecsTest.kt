@@ -14,6 +14,37 @@ class SettingsPersistenceCodecsTest {
     private val settingsCodec = StoredSettingsCodec { defaults }
 
     @Test
+    fun `RU relay defaults off and preserves normal protocol across storage`() {
+        assertFalse(settingsCodec.decode(null).advancedSettings.ruRelayEnabled)
+        val settings = defaults.copy(advancedSettings = defaults.advancedSettings.copy(
+            protocol = VpnProtocol.REALITY,
+            ruRelayEnabled = true,
+        ))
+        val restored = settingsCodec.decode(settingsCodec.encode(settings)).advancedSettings
+        assertTrue(restored.ruRelayEnabled)
+        assertEquals(VpnProtocol.REALITY, restored.protocol)
+        assertEquals(VpnProtocol.WIREGUARD, restored.effectiveProtocol)
+        assertEquals(VpnProtocol.REALITY, restored.copy(ruRelayEnabled = false).effectiveProtocol)
+        val damaged = settingsCodec.decode("""{"protocol":"WIREGUARD","ruRelayEnabled":false}""")
+        assertFalse(damaged.advancedSettings.ruRelayEnabled)
+        assertEquals(VpnProtocol.AUTO, damaged.advancedSettings.effectiveProtocol)
+    }
+
+    @Test
+    fun `legacy manual RU preference is ignored after upgrade`() {
+        val saved = defaults.copy(ruRelaySelectionRevision = 17L, advancedSettings = defaults.advancedSettings.copy(
+            ruRelayEnabled = true,
+        ))
+        val legacy = org.json.JSONObject(settingsCodec.encode(saved))
+            .put("ruRelayAutoPath", false).put("manualRuRelayNodeId", "relay-a").toString()
+        val restored = settingsCodec.decode(legacy)
+        assertTrue(restored.advancedSettings.ruRelayEnabled)
+        assertEquals(RuRelaySelection.Auto, restored.advancedSettings.ruRelaySelection)
+        assertEquals(17L, restored.ruRelaySelectionRevision)
+        assertFalse(settingsCodec.encode(restored).contains("manualRuRelayNodeId"))
+    }
+
+    @Test
     fun `multiHop intent and v2 runtime survive process storage round trip`() {
         val selection = MultiHopSettings(true,
             HopSelection(ServerSelectionMode.COUNTRY, countryCode = "RU"),

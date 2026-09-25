@@ -29,7 +29,8 @@ internal fun isManualEndpointSelectable(
     endpointOptions: List<VpnEndpointOption>,
     loadedCountryCode: String?,
     selectedCountryCode: String?,
-): Boolean = !selectedCountryCode.isNullOrBlank() &&
+    ruRelayEnabled: Boolean = false,
+): Boolean = !ruRelayEnabled && !selectedCountryCode.isNullOrBlank() &&
     loadedCountryCode.equals(selectedCountryCode, ignoreCase = true) &&
     option in EndpointGroupPolicy.manualOptions(endpointOptions)
 
@@ -81,14 +82,18 @@ internal fun AppUiRuntime.setYoutubeDirectDpiEnabled(enabled: Boolean) {
     applyAppRoutingSettings()
 }
 
-internal fun AppUiRuntime.setMultiHop(settings: MultiHopSettings) {
-    if (uiState.advancedSettings.multiHop == settings) return
+internal fun AppUiRuntime.setMultiHop(settings: MultiHopSettings, disableRuRelay: Boolean = false) {
+    if (settings.enabled && uiState.advancedSettings.ruRelayEnabled && !disableRuRelay) return
+    if (uiState.advancedSettings.multiHop == settings && !disableRuRelay) return
     val previousLatencyJob = clientLatencyRefreshJob
     previousLatencyJob?.cancel()
     clientLatencyRefreshJob = null
     clientLatencyRefreshTarget = null
     clientLatencyRefreshNetworkSignature = null
-    val next = uiState.copy(advancedSettings = uiState.advancedSettings.copy(multiHop = settings))
+    val next = uiState.copy(advancedSettings = uiState.advancedSettings.copy(
+        multiHop = settings,
+        ruRelayEnabled = if (settings.enabled && disableRuRelay) false else uiState.advancedSettings.ruRelayEnabled,
+    ))
     val persisted = settingsMutationCoordinator.persistUiFields(next)
     uiState = withFreeTrafficLimitNotice(next.copy(
         profile = persisted.profile,
@@ -99,6 +104,30 @@ internal fun AppUiRuntime.setMultiHop(settings: MultiHopSettings) {
     ) scope.launch {
         previousLatencyJob?.join()
         if (uiState.advancedSettings.multiHop == settings) vpnCommands.restart()
+    }
+}
+
+internal fun AppUiRuntime.setRuRelayEnabled(enabled: Boolean, disableManualMultiHop: Boolean = false) {
+    val next = AdvancedSettingsStateReducer.setRuRelayEnabled(uiState, enabled, disableManualMultiHop)
+    if (next == uiState) return
+    endpointOptionsRefreshJob?.cancel()
+    endpointOptionsRefreshJob = null
+    endpointOptionsRefreshCountryCode = null
+    val previousLatencyJob = clientLatencyRefreshJob
+    previousLatencyJob?.cancel()
+    clientLatencyRefreshJob = null
+    clientLatencyRefreshTarget = null
+    clientLatencyRefreshNetworkSignature = null
+    val persisted = settingsMutationCoordinator.persistUiFields(next)
+    uiState = withFreeTrafficLimitNotice(next.copy(
+        profile = persisted.profile,
+        endpointOptions = persisted.endpointOptions,
+    ))
+    if (uiState.connectionState == VpnConnectionState.CONNECTED ||
+        uiState.connectionState == VpnConnectionState.CONNECTING
+    ) scope.launch {
+        previousLatencyJob?.join()
+        if (uiState.advancedSettings.ruRelayEnabled == enabled) vpnCommands.restart()
     }
 }
 
@@ -115,14 +144,15 @@ internal fun AppUiRuntime.toggleProtectNewDevices(enabled: Boolean) {
 }
 
 internal fun AppUiRuntime.changeProtocol(protocol: VpnProtocol) {
-    if (uiState.advancedSettings.multiHop.enabled) return
+    if (uiState.advancedSettings.multiHop.enabled || uiState.advancedSettings.ruRelayEnabled ||
+        protocol == VpnProtocol.WIREGUARD) return
     val next = AdvancedSettingsStateReducer.changeProtocol(uiState, protocol)
     val persisted = settingsMutationCoordinator.persistProtocolChange(next, protocol)
     uiState = withFreeTrafficLimitNotice(next.copy(profile = persisted.profile))
 }
 
 internal fun AppUiRuntime.toggleAutoEndpointSelection(enabled: Boolean) {
-    if (uiState.advancedSettings.multiHop.enabled) return
+    if (uiState.advancedSettings.multiHop.enabled || uiState.advancedSettings.ruRelayEnabled) return
     val next = AdvancedSettingsStateReducer.setAutoEndpointSelection(uiState, enabled)
     val persisted = settingsMutationCoordinator.persistAutoEndpointSelection(next)
     uiState = withFreeTrafficLimitNotice(next.copy(profile = persisted.profile))
@@ -139,7 +169,7 @@ internal fun AppUiRuntime.refreshEndpointOptions(
     context: Context,
     force: Boolean = false,
 ) {
-    if (uiState.advancedSettings.multiHop.enabled) return
+    if (uiState.advancedSettings.multiHop.enabled || uiState.advancedSettings.ruRelayEnabled) return
     val attempt = authSessionCoordinator.attempt() ?: return
     val selectedCountryCode = uiState.userProfile.selectedCountryCode
     val selectedMode = uiState.userProfile.serverSelectionMode
@@ -181,7 +211,8 @@ internal fun AppUiRuntime.refreshEndpointOptions(
                 !authSessionCoordinator.isCurrent(attempt) ||
                 uiState.userProfile.selectedCountryCode != selectedCountryCode ||
                 uiState.userProfile.serverSelectionMode != selectedMode ||
-                uiState.userProfile.selectedNodeId != selectedNodeId
+                uiState.userProfile.selectedNodeId != selectedNodeId ||
+                uiState.advancedSettings.ruRelayEnabled
             ) {
                 return@launch
             }
@@ -226,12 +257,13 @@ internal fun AppUiRuntime.refreshEndpointOptions(
 }
 
 internal fun AppUiRuntime.selectManualEndpoint(option: VpnEndpointOption) {
-    if (uiState.advancedSettings.multiHop.enabled) return
+    if (uiState.advancedSettings.multiHop.enabled || uiState.advancedSettings.ruRelayEnabled) return
     if (!isManualEndpointSelectable(
             option = option,
             endpointOptions = uiState.endpointOptions,
             loadedCountryCode = uiState.endpointOptionsCountryCode,
             selectedCountryCode = uiState.userProfile.selectedCountryCode,
+            ruRelayEnabled = uiState.advancedSettings.ruRelayEnabled,
         )
     ) {
         return

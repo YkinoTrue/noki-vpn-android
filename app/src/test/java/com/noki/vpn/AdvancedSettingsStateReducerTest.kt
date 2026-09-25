@@ -7,6 +7,9 @@ import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.VlessProfile
 import com.noki.vpn.data.VpnEndpointOption
 import com.noki.vpn.data.VpnProtocol
+import com.noki.vpn.data.MultiHopSettings
+import com.noki.vpn.data.ServerSelectionMode
+import com.noki.vpn.data.UserProfile
 import com.noki.vpn.ui.siteRuleValidationError
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -14,6 +17,42 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class AdvancedSettingsStateReducerTest {
+    @Test
+    fun ruRelayKeepsNormalProtocolAndRequiresExplicitManualMultiHopSwitch() {
+        val manual = MultiHopSettings(enabled = true)
+        val current = AppUiState(advancedSettings = AdvancedSettings(
+            protocol = VpnProtocol.REALITY,
+            multiHop = manual,
+        ))
+
+        assertEquals(VpnProtocol.REALITY, current.advancedSettings.effectiveProtocol)
+        assertEquals(current, AdvancedSettingsStateReducer.setRuRelayEnabled(current, true))
+        val enabled = AdvancedSettingsStateReducer.setRuRelayEnabled(current, true, disableManualMultiHop = true)
+        assertEquals(VpnProtocol.WIREGUARD, enabled.advancedSettings.effectiveProtocol)
+        assertEquals(VpnProtocol.REALITY, enabled.advancedSettings.protocol)
+        assertEquals(false, enabled.advancedSettings.multiHop.enabled)
+        assertEquals(manual.entry, enabled.advancedSettings.multiHop.entry)
+
+        val disabled = AdvancedSettingsStateReducer.setRuRelayEnabled(enabled, false)
+        assertEquals(VpnProtocol.REALITY, disabled.advancedSettings.effectiveProtocol)
+        assertEquals(false, disabled.advancedSettings.multiHop.enabled)
+    }
+
+    @Test
+    fun ruRelayAlwaysUsesAutomaticSelectionAndKeepsNormalPreference() {
+        val initial = AppUiState(
+            advancedSettings = AdvancedSettings(protocol = VpnProtocol.REALITY),
+            userProfile = UserProfile(serverSelectionMode = ServerSelectionMode.SERVER,
+                selectedNodeId = "exit-a"),
+        )
+        val ru = AdvancedSettingsStateReducer.setRuRelayEnabled(initial, true)
+        assertEquals(com.noki.vpn.data.RuRelaySelection.Auto, ru.advancedSettings.ruRelaySelection)
+        assertEquals(VpnProtocol.WIREGUARD, ru.advancedSettings.effectiveProtocol)
+        assertEquals(initial.userProfile, ru.userProfile)
+        assertEquals(VpnProtocol.REALITY, ru.advancedSettings.protocol)
+        assertEquals(false, AdvancedSettingsStateReducer.setRuRelayEnabled(ru, false).advancedSettings.ruRelayEnabled)
+    }
+
     @Test
     fun packageSelectionTogglesMembership() {
         val current = AppUiState(selectedPackages = setOf("com.a"))

@@ -67,7 +67,7 @@ object RuntimeProfilePolicy {
     }
 
     fun isCachedProfileUsable(settings: StoredSettings): Boolean {
-        if (settings.advancedSettings.multiHop.enabled) return false
+        if (settings.advancedSettings.multiHop.enabled || settings.advancedSettings.ruRelayEnabled) return false
         val endpointCode = settings.profile.endpointCode.trim()
         if (endpointCode.isBlank()) return false
         if (settings.endpointOptions.none { it.code == endpointCode }) return false

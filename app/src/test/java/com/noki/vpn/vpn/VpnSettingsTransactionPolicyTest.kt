@@ -12,6 +12,36 @@ import org.junit.Test
 
 class VpnSettingsTransactionPolicyTest {
     @Test
+    fun ruModeAndExitSelectionMakeAnInFlightCandidateStale() {
+        val baseline = DefaultStoredSettingsFactory.create()
+        val auto = baseline.copy(advancedSettings = baseline.advancedSettings.copy(ruRelayEnabled = true))
+        val other = auto.copy(userProfile = auto.userProfile.copy(selectedNodeId = "exit-b"))
+        assertTrue(VpnSettingsTransactionPolicy.candidateBecameStale(baseline, auto))
+        assertTrue(VpnSettingsTransactionPolicy.candidateBecameStale(auto, other))
+    }
+
+    @Test
+    fun staleRuCandidateCannotBeActivatedOrOverwriteTheDesiredRoute() {
+        val baseline = DefaultStoredSettingsFactory.create()
+        val candidate = baseline.copy(profile = baseline.profile.copy(host = "old-xray.example"))
+        val desired = baseline.copy(
+            advancedSettings = baseline.advancedSettings.copy(ruRelayEnabled = true),
+            ruRelaySelectionRevision = 1L,
+        )
+
+        val outcome = VpnSettingsTransactionPolicy.commitRuntimeCandidate(
+            preparationBaseline = baseline,
+            previousRuntime = baseline,
+            candidate = candidate,
+            result = VpnSettingsTransactionPolicy.Result.Accepted,
+            persisted = desired,
+        )
+
+        assertEquals(false, outcome.acceptedForActivation)
+        assertEquals(desired.advancedSettings, outcome.persisted.advancedSettings)
+        assertEquals(desired.profile, outcome.persisted.profile)
+    }
+    @Test
     fun changingMultiHopIntentMakesInFlightDirectCandidateStale() {
         val baseline = DefaultStoredSettingsFactory.create()
         val latest = baseline.copy(advancedSettings = baseline.advancedSettings.copy(

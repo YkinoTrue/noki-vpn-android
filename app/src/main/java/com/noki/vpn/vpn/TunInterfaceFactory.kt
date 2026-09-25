@@ -5,6 +5,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.noki.vpn.data.StoredSettings
+import com.noki.vpn.data.BackendRuWireGuardConfig
 
 internal interface TunHandle : AutoCloseable {
     val fd: Int
@@ -30,6 +31,31 @@ internal class AndroidTunInterfaceFactory(
             .addDnsServer(VpnTunnelPolicy.DNS_SERVER)
             .addRoute("0.0.0.0", 0)
             .addRoute("::", 0)
+        return establishWithRules(builder, settings, underlay, includeOwnApp = false)
+    }
+
+    fun establishWireGuard(
+        settings: StoredSettings,
+        underlay: UnderlyingNetworkSnapshot?,
+        config: BackendRuWireGuardConfig,
+    ): TunHandle? {
+        val builder = service.Builder()
+            .setSession("Noki WireGuard · RU relay")
+            .setMtu(config.mtu)
+            .addAddress(config.address.substringBefore('/'), 32)
+            .addAddress("fd7a:6e6f:6b69::2", 128)
+            .addRoute("0.0.0.0", 0)
+            .addRoute("::", 0)
+        config.dns.forEach(builder::addDnsServer)
+        return establishWithRules(builder, settings, underlay, includeOwnApp = true)
+    }
+
+    private fun establishWithRules(
+        builder: VpnService.Builder,
+        settings: StoredSettings,
+        underlay: UnderlyingNetworkSnapshot?,
+        includeOwnApp: Boolean,
+    ): TunHandle? {
         builder.applyDefaultUnderlyingNetworkMetadata(underlay)
 
         val routingRules = AppVpnRoutingPolicy.rules(
@@ -45,8 +71,13 @@ internal class AndroidTunInterfaceFactory(
         }
         check(routingRules is AppVpnRoutingRules.Ready)
         try {
-            routingRules.allowedPackages.forEach(builder::addAllowedApplication)
-            routingRules.disallowedPackages.forEach(builder::addDisallowedApplication)
+            (routingRules.allowedPackages + if (includeOwnApp &&
+                settings.filterMode == com.noki.vpn.data.AppFilterMode.ONLY_SELECTED) {
+                setOf(service.packageName)
+            } else emptySet()).forEach(builder::addAllowedApplication)
+            (routingRules.disallowedPackages - if (includeOwnApp) {
+                setOf(service.packageName)
+            } else emptySet()).forEach(builder::addDisallowedApplication)
         } catch (error: PackageManager.NameNotFoundException) {
             throw TunInterfaceConfigurationException("rules_error", error)
         }

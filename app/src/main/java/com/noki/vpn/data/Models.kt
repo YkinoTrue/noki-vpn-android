@@ -48,7 +48,8 @@ enum class GlassMode(
 enum class VpnProtocol {
     AUTO,
     TLS,
-    REALITY;
+    REALITY,
+    WIREGUARD;
 
     companion object {
         fun fromBackendCode(code: String?): VpnProtocol = when {
@@ -79,6 +80,12 @@ data class MultiHopSettings(
     val entry: HopSelection? = null,
     val exit: HopSelection? = null,
 )
+
+sealed interface RuRelaySelection {
+    data object Off : RuRelaySelection
+    data object Auto : RuRelaySelection
+    data class Node(val nodeId: String) : RuRelaySelection
+}
 
 @Immutable
 data class MultiHopRuntime(
@@ -260,6 +267,7 @@ data class SecuritySettings(
 
 data class AdvancedSettings(
     val protocol: VpnProtocol = VpnProtocol.AUTO,
+    val ruRelayEnabled: Boolean = false,
     val endpointSelectionMode: EndpointSelectionMode = EndpointSelectionMode.AUTO,
     val manualEndpointCode: String = "",
     val manualEndpointGroupKey: String = "",
@@ -271,7 +279,15 @@ data class AdvancedSettings(
     val alwaysOnDomains: List<String> = emptyList(),
     val bypassDomains: List<String> = emptyList(),
     val multiHop: MultiHopSettings = MultiHopSettings(),
-)
+) {
+    val ruRelaySelection: RuRelaySelection
+        get() = if (ruRelayEnabled) RuRelaySelection.Auto else RuRelaySelection.Off
+
+    val effectiveProtocol: VpnProtocol
+        get() = if (ruRelayEnabled) VpnProtocol.WIREGUARD else protocol.also {
+            require(it != VpnProtocol.WIREGUARD) { "wireguard_requires_ru_relay" }
+        }
+}
 
 data class StoredSettings(
     val profile: VlessProfile,
@@ -291,6 +307,7 @@ data class StoredSettings(
     val backendDeviceKey: String = "",
     val backendDeviceId: String = "",
     val backendDeviceAccessRole: String = "owner",
+    val ruRelaySelectionRevision: Long = 0L,
 )
 
 @Immutable

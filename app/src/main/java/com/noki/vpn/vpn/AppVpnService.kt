@@ -12,6 +12,7 @@ import android.util.Log
 import com.noki.vpn.AppNotificationPoller
 import com.noki.vpn.AppLogUploadCoordinator
 import com.noki.vpn.NokiQuickSettingsTileService
+import com.noki.vpn.BuildConfig
 import com.noki.vpn.data.AtomicStoredSettingsStore
 import com.noki.vpn.data.AuthTokenRefresher
 import com.noki.vpn.data.AdvancedSettings
@@ -24,6 +25,7 @@ import com.noki.vpn.data.BackendRetryPolicy
 import com.noki.vpn.data.BackendVpnSession
 import com.noki.vpn.data.DeviceTrafficMonitor
 import com.noki.vpn.data.DeviceIdentity
+import com.noki.vpn.data.NokiBackendConfig
 import com.noki.vpn.data.EndpointHealth
 import com.noki.vpn.data.EndpointHealthEvent
 import com.noki.vpn.data.EndpointHealthEventReporter
@@ -53,9 +55,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.Locale
 import java.time.Instant
 import java.util.UUID
+import java.net.HttpURLConnection
+import java.net.URL
 
 class AppVpnService : VpnService() {
     private lateinit var isXrayRuntimeAvailable: () -> Boolean
@@ -80,6 +85,10 @@ class AppVpnService : VpnService() {
     private lateinit var temporaryVpnCoordinator: TemporaryVpnSessionCoordinator
     private lateinit var settingsStore: AtomicStoredSettingsStore
     private lateinit var connectionOrchestrator: VpnConnectionOrchestrator
+    private lateinit var ruTunFactory: AndroidTunInterfaceFactory
+    private var ruRuntime: NativeWireGuardRuntime? = null
+    private var ruLeaseExpiresAtMillis: Long? = null
+    private val ruLeaseOwner = Any()
     private var backgroundJob: Job = SupervisorJob()
     private var backgroundScope: CoroutineScope = CoroutineScope(backgroundJob + Dispatchers.IO)
     private val destroyCleanupJob: Job = SupervisorJob()
@@ -144,6 +153,7 @@ class AppVpnService : VpnService() {
         )
         screenStateMonitor = VpnScreenStateMonitor(this, notificationController::setScreenOn)
         val tunFactory = AndroidTunInterfaceFactory(this)
+        ruTunFactory = tunFactory
         underlyingNetworkSource = AndroidUnderlyingNetworkSource(this)
         networkMonitor = VpnNetworkMonitor.android(
             context = this,
@@ -475,6 +485,10 @@ class AppVpnService : VpnService() {
         strategy: VpnPreparationStrategy,
         generationId: Long,
     ) {
+        if (repository.load().advancedSettings.ruRelayEnabled) {
+            performRuWireGuardStart(repository, generationId)
+            return
+        }
         val prepared = prepareConnectionSettings(
             repository = repository,
             strategy = strategy,
@@ -508,6 +522,127 @@ class AppVpnService : VpnService() {
                 connectionSuccess = true,
             )
             scheduleFreshSelectionPrepare()
+        }
+    }
+
+    private suspend fun performRuWireGuardStart(
+        repository: SettingsRepository,
+        generationId: Long,
+    ) {
+        if (!BuildConfig.NOKI_NATIVE_WG_ENABLED) {
+            failStart(repository, "ru_wireguard_runtime_unavailable")
+            return
+        }
+        var baseline = repository.load()
+        val prepared = try {
+            val coordinator = RuWireGuardConnectionCoordinator(applicationContext, repository, backendApi)
+            try {
+                coordinator.prepare(baseline)
+            } catch (expired: BackendException) {
+                if (expired.statusCode != 401) throw expired
+                val refreshed = AuthTokenRefresher(repository, backendApi,
+                    onRevocationPending = { PendingLogoutRevocationWorker.enqueue(applicationContext) },
+                ).refreshStoredTokens()
+                check(refreshed != null) { "auth_required" }
+                baseline = repository.load()
+                coordinator.prepare(baseline)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (connectionOrchestrator.isCurrent(generationId)) {
+                failStart(repository, error.message ?: "ru_wireguard_prepare_failed", error)
+            }
+            return
+        }
+        if (!connectionOrchestrator.isCurrent(generationId)) return
+        connectionOrchestrator.withLifecycleLock {
+            if (!connectionOrchestrator.isCurrent(generationId)) return@withLifecycleLock
+            if (VpnSettingsTransactionPolicy.candidateBecameStale(baseline, repository.load())) {
+                failStart(repository, "selection_changed")
+                return@withLifecycleLock
+            }
+            val settings = normalizeInstalledPackages(repository.load())
+            val underlay = underlyingNetworkSource.currentSnapshot()
+            val established = try {
+                ruTunFactory.establishWireGuard(settings, underlay, prepared.session.wireguard)
+            } catch (error: TunInterfaceConfigurationException) {
+                failStart(repository, error.reason, error)
+                return@withLifecycleLock
+            }
+            if (established == null) {
+                failStart(repository, "ru_wireguard_interface_error")
+                return@withLifecycleLock
+            }
+            val previous = tunnel
+            tunnel = established
+            if (previous !== established) previous?.close()
+            connectionOrchestrator.updateUnderlay(underlay)
+            val native = try {
+                NativeWireGuardRuntime(this@AppVpnService).also { runtime ->
+                    check(runtime.start(wireGuardIpcConfig(prepared), established)) {
+                        "ru_wireguard_native_start_failed"
+                    }
+                }
+            } catch (error: Throwable) {
+                failStart(repository, "ru_wireguard_native_start_failed", error)
+                return@withLifecycleLock
+            } finally {
+                prepared.privateKey.fill(0)
+            }
+            ruRuntime = native
+            // A native start confirms socket protection, while a handshake confirms the path.
+            var handshook = false
+            for (attempt in 0 until 16) {
+                currentCoroutineContext().ensureActive()
+                if (!connectionOrchestrator.isCurrent(generationId)) return@withLifecycleLock
+                if ((native.statistics()?.lastHandshakeSeconds ?: 0L) > 0L) {
+                    handshook = true
+                    break
+                }
+                delay(1_000)
+            }
+            if (!handshook) {
+                failStart(repository, "ru_wireguard_handshake_timeout")
+                return@withLifecycleLock
+            }
+            val exitReachable = runCatching {
+                val connection = URL(NokiBackendConfig.apiBaseUrl + "/health")
+                    .openConnection() as HttpURLConnection
+                try {
+                    connection.connectTimeout = 5_000
+                    connection.readTimeout = 5_000
+                    connection.instanceFollowRedirects = false
+                    connection.responseCode == 200
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrDefault(false)
+            if (!exitReachable) {
+                failStart(repository, "ru_wireguard_exit_probe_failed")
+                return@withLifecycleLock
+            }
+            if (VpnSettingsTransactionPolicy.candidateBecameStale(baseline, repository.load())) {
+                failStart(repository, "selection_changed")
+                return@withLifecycleLock
+            }
+            currentRuntimeMode = VpnRuntimeMode.ACCOUNT
+            ruLeaseExpiresAtMillis = prepared.session.identity.leaseExpiresAtEpochMillis
+            activeEndpointNetworkKind = underlay?.kind ?: EndpointRankingPolicy.NetworkKind.OTHER
+            activeSettings = settings
+            notificationServerLabel = VpnServiceLogContext.serverLabel(settings)
+            connectedAtMillis = System.currentTimeMillis()
+            connectionOrchestrator.activateConnected(
+                generationId = generationId,
+                coreId = ++runtimeCoreSequence,
+                tunnel = established,
+                settings = settings,
+                underlay = underlay,
+            )
+            broadcastState(VpnConnectionState.CONNECTED)
+            startForeground(NOTIFICATION_ID, createActiveNotification())
+            repository.recordAppLog("vpn", message = "ru_wireguard_connected",
+                details = "exit_node=${prepared.exitNodeId}", connectionSuccess = true)
         }
     }
 
@@ -732,7 +867,7 @@ class AppVpnService : VpnService() {
         preparationBaseline: StoredSettings,
         candidate: StoredSettings,
         result: VpnSettingsTransactionPolicy.Result,
-    ): StoredSettings {
+    ): VpnSettingsTransactionPolicy.RuntimeCommitOutcome {
         val outcome = settingsStore.updateAndReturn { persisted ->
             VpnSettingsTransactionPolicy.commitRuntimeCandidate(
                 previousRuntime = activeSettings ?: preparationBaseline,
@@ -744,7 +879,7 @@ class AppVpnService : VpnService() {
         }
         activeSettings = outcome.runtime
         if (outcome.requiresFreshPrepare) scheduleFreshSelectionPrepare()
-        return outcome.runtime
+        return outcome
     }
 
     private fun scheduleFreshSelectionPrepare() {
@@ -785,6 +920,7 @@ class AppVpnService : VpnService() {
         delayedTaskScheduler.cancel(runtimeDomainReapplyOwner)
         delayedTaskScheduler.cancel(lockdownRecoveryOwner)
         delayedTaskScheduler.cancel(temporaryLeaseExpiryOwner)
+        delayedTaskScheduler.cancel(ruLeaseOwner)
         delayedTaskScheduler.cancel(transientRecoveryOwner)
         transientRecoveryAttempt = 0
         lockdownRecoveryActive = false
@@ -870,6 +1006,11 @@ class AppVpnService : VpnService() {
         ) {
             return@withLifecycleLock
         }
+        if (runtimeMode == VpnRuntimeMode.ACCOUNT &&
+            VpnSettingsTransactionPolicy.candidateBecameStale(preparationBaseline, settingsStore.load())) {
+            failStart(repository, "selection_changed")
+            return@withLifecycleLock
+        }
         currentRuntimeMode = runtimeMode
         preparedMetadata?.let { acceptPreparedMetadata(repository, it) }
         notificationServerLabel = VpnServiceLogContext.serverLabel(settings)
@@ -944,6 +1085,11 @@ class AppVpnService : VpnService() {
         while (true) {
             currentCoroutineContext().ensureActive()
             if (!connectionOrchestrator.isCurrent(generationId)) return@withLifecycleLock
+            if (runtimeMode == VpnRuntimeMode.ACCOUNT &&
+                VpnSettingsTransactionPolicy.candidateBecameStale(preparationBaseline, settingsStore.load())) {
+                failStart(repository, "selection_changed")
+                return@withLifecycleLock
+            }
             excludedCodes += attemptSettings.profile.endpointCode
             val config = XrayConfigFactory.build(
                 attemptSettings.profile,
@@ -1080,6 +1226,10 @@ class AppVpnService : VpnService() {
     private fun refreshConnectedVpn(allowCachedFallback: Boolean) {
         if (currentRuntimeMode == VpnRuntimeMode.AUTH_TEMP) {
             restartTemporaryVpn()
+            return
+        }
+        if (ruRuntime != null || settingsStore.load().advancedSettings.ruRelayEnabled) {
+            restartVpn(VpnPreparationStrategy.FreshOnly)
             return
         }
         val activeTunnel = tunnel
@@ -1601,11 +1751,17 @@ class AppVpnService : VpnService() {
         currentRuntimeMode = runtimeMode
         if (runtimeMode == VpnRuntimeMode.ACCOUNT) resetTransientRecovery()
         val connectedSettings = if (persistSettings) {
-            commitSettingsTransaction(
+            val commit = commitSettingsTransaction(
                 preparationBaseline = preparationBaseline,
                 candidate = settings,
                 result = VpnSettingsTransactionPolicy.Result.Accepted,
             )
+            if (!commit.acceptedForActivation) {
+                connectionOrchestrator.stopXray()
+                failStart(repository, "selection_changed")
+                return
+            }
+            commit.runtime
         } else {
             activeSettings = settings
             settings
@@ -2061,6 +2217,10 @@ class AppVpnService : VpnService() {
             nextSignature = nextUnderlyingSnapshot.signature,
         )
         if (plan.action == VpnHandoverPolicy.Action.NoAction) return
+        if (ruRuntime != null) {
+            restartVpn(VpnPreparationStrategy.FreshOnly)
+            return
+        }
         activeEndpointNetworkKind = nextKind
         SettingsRepository(this).recordAppLog(
             category = "vpn",
@@ -2187,7 +2347,12 @@ class AppVpnService : VpnService() {
                 if (!admitted() || !VpnReadinessPolicy.accept(result.delayMs)) {
                     return@withLifecycleLock false
                 }
-                val connected = commitSettingsTransaction(baseline, candidate, VpnSettingsTransactionPolicy.Result.Accepted)
+                val commit = commitSettingsTransaction(baseline, candidate, VpnSettingsTransactionPolicy.Result.Accepted)
+                if (!commit.acceptedForActivation) {
+                    connectionOrchestrator.stopXray()
+                    return@withLifecycleLock false
+                }
+                val connected = commit.runtime
                 connectionOrchestrator.updateUnderlay(next)
                 activeEndpointNetworkKind = next.kind
                 val nextOwner = connectionOrchestrator.activateConnected(
@@ -2247,6 +2412,9 @@ class AppVpnService : VpnService() {
         endpointRating: String? = null,
         retryBlockedTunnel: Boolean = true,
     ) {
+        ruRuntime?.stop()
+        ruRuntime = null
+        ruLeaseExpiresAtMillis = null
         cancelDelayedVpnCallbacks()
         recordDiagnostic(
             repository = repository,
@@ -2342,6 +2510,9 @@ class AppVpnService : VpnService() {
         settings: StoredSettings,
         reason: String,
     ) {
+        ruRuntime?.stop()
+        ruRuntime = null
+        ruLeaseExpiresAtMillis = null
         val isLockdown = tunnel != null && shouldBlockDirectTraffic()
         when (ConnectedWatchdogPolicy.exhaustedRecoveryDecision(isLockdown)) {
             ConnectedWatchdogPolicy.ExhaustedRecoveryDecision.ReportLockdownBlockedAndRetry -> {
@@ -2456,6 +2627,9 @@ class AppVpnService : VpnService() {
         removeForeground: Boolean = true,
         reason: String? = null,
     ) {
+        ruRuntime?.stop()
+        ruRuntime = null
+        ruLeaseExpiresAtMillis = null
         cancelDelayedVpnCallbacks()
         warmupController.clear()
         connectionOrchestrator.releaseResourcesWhileOwned(
@@ -2479,6 +2653,10 @@ class AppVpnService : VpnService() {
     }
 
     private fun reconnectFailedClosedVpn(allowCachedFallback: Boolean) {
+        if (settingsStore.load().advancedSettings.ruRelayEnabled) {
+            restartVpn(VpnPreparationStrategy.FreshOnly)
+            return
+        }
         val activeTunnel = tunnel
         if (activeTunnel == null || currentState != VpnConnectionState.FAILED) {
             restartVpn(strategy = if (allowCachedFallback) VpnPreparationStrategy.CachedFirst else VpnPreparationStrategy.CachedFirstWithoutFallback,)
@@ -2753,6 +2931,10 @@ class AppVpnService : VpnService() {
         DeviceTrafficMonitor.start(sessionId = checkNotNull(connectedAtMillis))
         startNotificationTicker()
         startNetworkChangeMonitor(activeEndpointNetworkKind)
+        if (ruRuntime != null) {
+            scheduleRuLeaseRenewal()
+            return
+        }
         endpointHealthController.start(owner, settings)
         startConnectedWatchdog(settings, owner)
         warmupController.start(owner) { session ->
@@ -2765,8 +2947,19 @@ class AppVpnService : VpnService() {
         }
     }
 
+    private fun scheduleRuLeaseRenewal() {
+        val lease = ruLeaseExpiresAtMillis ?: return
+        val delayMillis = (lease - System.currentTimeMillis() - 60_000L).coerceAtLeast(0L)
+        delayedTaskScheduler.schedule(ruLeaseOwner, delayMillis) {
+            if (ruRuntime != null && currentState == VpnConnectionState.CONNECTED) {
+                restartVpn(VpnPreparationStrategy.FreshOnly)
+            }
+        }
+    }
+
     private fun stopConnectedSidecars(owner: RuntimeOwner?) {
         delayedTaskScheduler.cancel(temporaryLeaseExpiryOwner)
+        delayedTaskScheduler.cancel(ruLeaseOwner)
         if (currentRuntimeMode == VpnRuntimeMode.AUTH_TEMP) {
             stopNetworkChangeMonitor()
             stopNotificationTicker()

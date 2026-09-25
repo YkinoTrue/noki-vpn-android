@@ -163,6 +163,7 @@ object EndpointSelector {
             VpnProtocol.AUTO -> true
             VpnProtocol.TLS -> candidate.security.equals("tls", ignoreCase = true)
             VpnProtocol.REALITY -> candidate.security.equals("reality", ignoreCase = true)
+            VpnProtocol.WIREGUARD -> false
         }
 
     fun currentNetworkKind(context: Context): EndpointRankingPolicy.NetworkKind {

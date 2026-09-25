@@ -1,6 +1,7 @@
 package com.noki.vpn.ui
 
 import com.noki.vpn.AppUiState
+import com.noki.vpn.data.AppLanguage
 import com.noki.vpn.data.EndpointGroupPolicy
 import com.noki.vpn.data.VpnEndpointOption
 
@@ -13,6 +14,13 @@ internal fun protocolCardLabel(
     state: AppUiState,
     autoEndpointSelection: Boolean,
 ): String {
+    if (state.advancedSettings.ruRelayEnabled) {
+        return if (state.personalizationSettings.language == AppLanguage.RU) {
+            "WireGuard · RU-реле"
+        } else {
+            "WireGuard · RU relay"
+        }
+    }
     if (!autoEndpointSelection) return selectedEndpointLabel(state)
     val endpointLabel = resolvedEndpointLabel(state) ?: profileEndpointLabel(state)
     return endpointLabel?.let { "Auto ($it)" } ?: "Auto"

@@ -252,7 +252,11 @@ class MainViewModel(
     fun setYoutubeDirectDpiEnabled(enabled: Boolean) =
         runtime.setYoutubeDirectDpiEnabled(enabled)
 
-    fun setMultiHop(settings: MultiHopSettings) = runtime.setMultiHop(settings)
+    fun setMultiHop(settings: MultiHopSettings, disableRuRelay: Boolean = false) =
+        runtime.setMultiHop(settings, disableRuRelay)
+
+    fun setRuRelayEnabled(enabled: Boolean, disableManualMultiHop: Boolean = false) =
+        runtime.setRuRelayEnabled(enabled, disableManualMultiHop)
 
     fun toggleBiometric(enabled: Boolean) = runtime.toggleBiometric(enabled)
 

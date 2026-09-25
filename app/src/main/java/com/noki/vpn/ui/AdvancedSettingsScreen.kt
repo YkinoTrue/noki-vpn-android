@@ -1,5 +1,7 @@
 package com.noki.vpn.ui
 
+import com.noki.vpn.BuildConfig
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +18,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -78,6 +83,10 @@ fun AdvancedSettingsScreen(
             val bypassCount = state.advancedSettings.bypassDomains.size
             var showProtocolSheet by rememberSaveable { mutableStateOf(false) }
             var showProtocolNotice by rememberSaveable { mutableStateOf(false) }
+            var showRuConflict by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(state.advancedSettings.ruRelayEnabled) {
+                if (state.advancedSettings.ruRelayEnabled) showProtocolSheet = false
+            }
 
             LaunchedEffect(showProtocolNotice) {
                 if (showProtocolNotice) {
@@ -86,7 +95,8 @@ fun AdvancedSettingsScreen(
                 }
             }
             LaunchedEffect(state.isAuthenticated, state.userProfile.selectedCountryCode, state.advancedSettings.multiHop.enabled) {
-                if (state.isAuthenticated && !state.advancedSettings.multiHop.enabled) {
+                if (state.isAuthenticated && !state.advancedSettings.multiHop.enabled &&
+                    !state.advancedSettings.ruRelayEnabled) {
                     viewModel.refreshEndpointOptions(context)
                 }
             }
@@ -138,7 +148,55 @@ fun AdvancedSettingsScreen(
 
                 Spacer(modifier = Modifier.height(metrics.dp(20f)))
 
-                if (!state.advancedSettings.multiHop.enabled) AdvancedToggleCard(
+                AdvancedToggleCard(
+                    enabled = state.advancedSettings.ruRelayEnabled,
+                    title = tr(language, "RU-реле", "RU relay"),
+                    backdrop = surfaceBackdrop,
+                    liveGlassEnabled = liveGlassEnabled,
+                    modifier = Modifier.widthIn(max = metrics.dp(370f)).fillMaxWidth()
+                        .height(metrics.dp(NokiUiKitPolicy.advancedProtocolToggleCardHeightDp)),
+                    onEnabledChanged = { enabled ->
+                        if (enabled && !BuildConfig.NOKI_NATIVE_WG_ENABLED) Unit
+                        else if (enabled && state.advancedSettings.multiHop.enabled) showRuConflict = true
+                        else viewModel.setRuRelayEnabled(enabled)
+                    },
+                )
+                AdvancedText(
+                    text = tr(language, "Подключение через российское реле по WireGuard",
+                        "Connect through a Russian relay using WireGuard"),
+                    fontSize = 12f,
+                    lineHeight = 14.4f,
+                    color = AdvancedTextSecondary,
+                    modifier = Modifier.widthIn(max = metrics.dp(370f)).fillMaxWidth()
+                        .padding(horizontal = metrics.dp(18f)),
+                )
+
+                if (state.advancedSettings.ruRelayEnabled) {
+                    Spacer(modifier = Modifier.height(metrics.dp(25f)))
+                    AdvancedText(
+                        text = "WireGuard",
+                        fontSize = 17f,
+                        lineHeight = 20f,
+                        color = AdvancedTextPrimary,
+                        modifier = Modifier.widthIn(max = metrics.dp(370f)).fillMaxWidth()
+                            .padding(horizontal = metrics.dp(18f)),
+                    )
+                    Spacer(modifier = Modifier.height(metrics.dp(15f)))
+                    AdvancedText(
+                        text = tr(language,
+                            "RU-реле выбирается автоматически с учётом задержки и веса",
+                            "The RU relay is selected automatically using latency and weight"),
+                        fontSize = 12f,
+                        lineHeight = 14.4f,
+                        color = AdvancedTextSecondary,
+                        modifier = Modifier.widthIn(max = metrics.dp(370f)).fillMaxWidth()
+                            .padding(horizontal = metrics.dp(18f)),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(metrics.dp(25f)))
+
+                if (!state.advancedSettings.multiHop.enabled && !state.advancedSettings.ruRelayEnabled) AdvancedToggleCard(
                     enabled = autoEndpointSelection,
                     title = tr(language, "Автовыбор протокола", "Auto protocol selection"),
                     backdrop = surfaceBackdrop,
@@ -155,7 +213,8 @@ fun AdvancedSettingsScreen(
                     },
                 )
 
-                if (!autoEndpointSelection && !state.advancedSettings.multiHop.enabled) {
+                if (!autoEndpointSelection && !state.advancedSettings.multiHop.enabled &&
+                    !state.advancedSettings.ruRelayEnabled) {
                     Spacer(modifier = Modifier.height(metrics.dp(25f)))
 
                     AdvancedManualProtocolCard(
@@ -304,7 +363,7 @@ fun AdvancedSettingsScreen(
                     )
                 }
 
-                if (showProtocolSheet) {
+                if (showProtocolSheet && !state.advancedSettings.ruRelayEnabled) {
                     val manualOptions = manualEndpointOptionsForCurrentCountry(state)
                     AdvancedProtocolSheet(
                         selectedProtocol = state.advancedSettings.protocol,
@@ -324,6 +383,20 @@ fun AdvancedSettingsScreen(
                         },
                     )
                 }
+                if (showRuConflict) AlertDialog(
+                    onDismissRequest = { showRuConflict = false },
+                    title = { Text(tr(language, "Выбрать RU-реле?", "Use RU relay?")) },
+                    text = { Text(tr(language,
+                        "Ручной MultiHop будет выключен. Выбранные вход и выход сохранятся.",
+                        "Manual MultiHop will turn off. Your entry and exit choices will be saved.")) },
+                    confirmButton = { TextButton(onClick = {
+                        showRuConflict = false
+                        viewModel.setRuRelayEnabled(true, disableManualMultiHop = true)
+                    }) { Text(tr(language, "Включить RU-реле", "Enable RU relay")) } },
+                    dismissButton = { TextButton(onClick = { showRuConflict = false }) {
+                        Text(tr(language, "Отмена", "Cancel"))
+                    } },
+                )
             }
         }
     }

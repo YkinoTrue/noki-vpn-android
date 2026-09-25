@@ -18,8 +18,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,6 +75,7 @@ fun MultiHopScreen(state: AppUiState, viewModel: MainViewModel) {
     var draft by remember { mutableStateOf(state.advancedSettings.multiHop) }
     var expanded by remember { mutableStateOf<String?>(null) }
     var attemptedSave by remember { mutableStateOf(false) }
+    var showRuConflict by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (state.isAuthenticated) viewModel.refreshServers() }
     val error = multiHopSelectionError(draft, state.locations)
 
@@ -130,8 +133,11 @@ fun MultiHopScreen(state: AppUiState, viewModel: MainViewModel) {
             onClick = {
                 attemptedSave = true
                 if (error == null) {
-                    viewModel.setMultiHop(draft)
-                    viewModel.goBack()
+                    if (draft.enabled && state.advancedSettings.ruRelayEnabled) showRuConflict = true
+                    else {
+                        viewModel.setMultiHop(draft)
+                        viewModel.goBack()
+                    }
                 }
             },
             colors = ButtonDefaults.buttonColors(containerColor = AdvancedAccentPrimary, contentColor = AdvancedBgLighter),
@@ -142,6 +148,21 @@ fun MultiHopScreen(state: AppUiState, viewModel: MainViewModel) {
             Text(tr(language, "Отмена", "Cancel"))
         }
     }
+    if (showRuConflict) AlertDialog(
+        onDismissRequest = { showRuConflict = false },
+        title = { Text(tr(language, "Выбрать ручной MultiHop?", "Use manual MultiHop?")) },
+        text = { Text(tr(language,
+            "RU-реле будет выключено. Настройки Автопути и выбранное RU-реле сохранятся.",
+            "RU relay will turn off. Auto path and your relay choice will be saved.")) },
+        confirmButton = { TextButton(onClick = {
+            showRuConflict = false
+            viewModel.setMultiHop(draft, disableRuRelay = true)
+            viewModel.goBack()
+        }) { Text(tr(language, "Включить MultiHop", "Enable MultiHop")) } },
+        dismissButton = { TextButton(onClick = { showRuConflict = false }) {
+            Text(tr(language, "Отмена", "Cancel"))
+        } },
+    )
 }
 
 @Composable

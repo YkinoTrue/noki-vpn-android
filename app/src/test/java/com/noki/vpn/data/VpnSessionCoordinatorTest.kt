@@ -260,6 +260,10 @@ class VpnSessionCoordinatorTest {
         private val sessionError: BackendException? = null,
         private val candidates: List<BackendEndpointCandidate> = emptyList(),
     ) : VpnSessionApi {
+        override suspend fun createRuWireGuardSession(
+            token: String,
+            request: RuWireGuardSessionRequest,
+        ): BackendRuWireGuardSession = error("RU WireGuard is outside this Xray coordinator test")
         var catalogRequests = 0
         override suspend fun serverLocations(token: String, deviceId: String?, deviceKey: String?): List<BackendLocation> =
             listOf("DE" to "de-2", "LV" to "lv2").map { (country, location) ->

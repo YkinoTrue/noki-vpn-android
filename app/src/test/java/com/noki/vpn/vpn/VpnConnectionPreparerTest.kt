@@ -20,6 +20,40 @@ import org.junit.Test
 
 class VpnConnectionPreparerTest {
     @Test
+    fun `RU mode never requests a fresh Xray session`() = runBlocking {
+        val baseline = cachedSettings().copy(backendAccessToken = "token", isAuthenticated = true)
+        val ru = baseline.copy(advancedSettings = baseline.advancedSettings.copy(ruRelayEnabled = true))
+        var invoked = false
+        val preparer = VpnConnectionPreparer(
+            store = PreparerStore(ru),
+            currentNetworkKind = { EndpointRankingPolicy.NetworkKind.WIFI },
+            resolveStart = { _, _, _, _ -> invoked = true; error("Xray session must not be requested") },
+            refreshAccessToken = { error("refresh must not run") },
+        )
+
+        val result = preparer.prepare(VpnPreparationStrategy.FreshOnly)
+
+        assertTrue(result is VpnConnectionPreparer.Outcome.Failure)
+        assertEquals(false, invoked)
+    }
+
+    @Test
+    fun `RU mode never returns cached Xray and fails closed before WG runtime exists`() = runBlocking {
+        val baseline = cachedSettings().copy(backendAccessToken = "token")
+        val ru = baseline.copy(advancedSettings = baseline.advancedSettings.copy(ruRelayEnabled = true))
+        var invoked = false
+        val preparer = VpnConnectionPreparer(
+            store = PreparerStore(ru),
+            currentNetworkKind = { EndpointRankingPolicy.NetworkKind.WIFI },
+            resolveStart = { _, _, _, _ -> invoked = true; error("Xray session must not be requested") },
+            refreshAccessToken = { error("refresh must not run") },
+        )
+
+        val result = preparer.prepare(VpnPreparationStrategy.CachedFirst)
+        assertTrue(result is VpnConnectionPreparer.Outcome.Failure)
+        assertEquals(false, invoked)
+    }
+    @Test
     fun `blocking backend call is bounded by the total preparation deadline`() = runBlocking {
         val settings = cachedSettings().copy(backendAccessToken = "token", isAuthenticated = true)
         var resolveCount = 0

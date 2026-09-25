@@ -39,8 +39,12 @@ val googleWebClientId = providers.gradleProperty("noki.googleWebClientId")
     .get()
 val libv2rayAarFile = layout.projectDirectory.file("libs/libv2ray.aar")
 val libv2rayAarSha256 = "B6E83D952368ED30C6D2A65F3349C37CAFA3E3695542F078A0A993BB54561518"
-val expectedReleaseVersionCode = 247
-val expectedReleaseVersionName = "1.3.2"
+val nativeWireGuardEnabled = providers.gradleProperty("noki.enableNativeWg")
+    .map(String::toBoolean)
+    .orElse(false)
+    .get()
+val expectedReleaseVersionCode = 250
+val expectedReleaseVersionName = "1.3.5"
 
 fun String.toBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -74,6 +78,7 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", googleWebClientId.toBuildConfigString())
         buildConfigField("String", "NOKI_BACKEND_PROBE_HOST", nokiBackendProbeHost.toBuildConfigString())
         buildConfigField("boolean", "DIAGNOSTIC_LOGGING", "false")
+        buildConfigField("boolean", "NOKI_NATIVE_WG_ENABLED", nativeWireGuardEnabled.toString())
         buildConfigField(
             "String",
             "TELEGRAM_LOGIN_REDIRECT_URI",
@@ -96,6 +101,10 @@ android {
             include("arm64-v8a", "armeabi-v7a", "x86_64")
             isUniversalApk = true
         }
+    }
+
+    if (nativeWireGuardEnabled) {
+        sourceSets.getByName("main").jniLibs.srcDir(rootProject.file("wireguard-native/build/jniLibs"))
     }
 
     signingConfigs {
@@ -256,6 +265,7 @@ tasks.matching { it.name == "assembleDiagnostic" }.configureEach {
 
 tasks.matching { it.name == "preBuild" }.configureEach {
     dependsOn("verifyLibv2rayAar")
+    if (nativeWireGuardEnabled) dependsOn(":wireguard-native:verifyNative")
 }
 
 dependencies {

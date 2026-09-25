@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -379,6 +380,82 @@ class BackendApiClient(
 
     override suspend fun serverLocations(token: String, deviceId: String?, deviceKey: String?): List<BackendLocation> =
         bootstrap(token, deviceId, deviceKey).locations
+
+    suspend fun ruRelayCatalog(
+        token: String,
+        deviceId: String,
+        deviceKey: String?,
+        exitNodeId: String,
+    ): RuRelayCatalog = withContext(Dispatchers.IO) {
+        val url = jsonApi.apiUrl("/vpn/ru-relays").toHttpUrl().newBuilder()
+            .addQueryParameter("exit_node_id", exitNodeId)
+            .addQueryParameter("device_id", deviceId)
+            .build()
+        val json = execute(Request.Builder().url(url)
+            .header("Authorization", "Bearer $token")
+            .currentDeviceHeaders(deviceId, deviceKey)
+            .get().build())
+        RuRelayCatalogJsonParser.parse(json, exitNodeId)
+    }
+
+    override suspend fun createRuWireGuardSession(
+        token: String,
+        request: RuWireGuardSessionRequest,
+    ): BackendRuWireGuardSession = RuWireGuardSessionJsonParser.parse(
+        postJson("/vpn/session", request.toBackendJson(), token),
+        RuWireGuardSessionExpectation(
+            requestId = request.requestId,
+            publicKeyId = request.publicKeyId,
+            exitNodeId = request.exitNodeId,
+            relaySelection = request.relaySelection,
+        ),
+    )
+
+    suspend fun pollRuWireGuardSession(
+        token: String,
+        request: RuWireGuardSessionRequest,
+        sessionId: String,
+    ): BackendRuWireGuardSession = withContext(Dispatchers.IO) {
+        val url = jsonApi.apiUrl("/vpn/sessions/$sessionId").toHttpUrl().newBuilder()
+            .addQueryParameter("device_id", request.deviceId).build()
+        val json = execute(Request.Builder().url(url)
+            .header("Authorization", "Bearer $token")
+            .currentDeviceHeaders(request.deviceId, request.deviceKey)
+            .get().build())
+        RuWireGuardSessionJsonParser.parse(json, RuWireGuardSessionExpectation(
+            requestId = request.requestId,
+            publicKeyId = request.publicKeyId,
+            exitNodeId = request.exitNodeId,
+            relaySelection = request.relaySelection,
+        )).also { require(it.identity.sessionId == sessionId) { "ru_wireguard_poll_mismatch" } }
+    }
+
+    suspend fun registerRuWireGuardKey(
+        token: String,
+        deviceId: String,
+        deviceKey: String?,
+        deviceNonce: String,
+        deviceSignature: String,
+        publicKey: String,
+    ): BackendRuWireGuardKey {
+        java.util.UUID.fromString(deviceId)
+        val keyBytes = java.util.Base64.getDecoder().decode(publicKey)
+        require(keyBytes.size == 32 && keyBytes.any { it.toInt() != 0 } &&
+            java.util.Base64.getEncoder().encodeToString(keyBytes) == publicKey) {
+            "ru_wireguard_public_key_invalid"
+        }
+        val payload = JSONObject()
+            .put("device_id", deviceId)
+            .put("device_key", deviceKey)
+            .put("device_nonce", deviceNonce)
+            .put("device_signature", deviceSignature)
+            .put("public_key", publicKey)
+        val json = postJson("/vpn/wireguard-keys", payload, token, deviceId, deviceKey)
+        val id = json.getString("id")
+        java.util.UUID.fromString(id)
+        require(json.getString("public_key") == publicKey) { "ru_wireguard_public_key_mismatch" }
+        return BackendRuWireGuardKey(id, publicKey)
+    }
 
     override suspend fun createTemporaryVpnChallenge(
         publicKey: String,

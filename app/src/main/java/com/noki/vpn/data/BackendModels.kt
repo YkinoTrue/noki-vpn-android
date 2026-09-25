@@ -258,6 +258,62 @@ data class BackendVpnSession(
     val multiHop: BackendMultiHopSession? = null,
 )
 
+data class RuWireGuardSessionExpectation(
+    val requestId: String,
+    val publicKeyId: String,
+    val exitNodeId: String,
+    val relaySelection: RuRelaySelection,
+)
+
+data class RuWireGuardSessionRequest(
+    val deviceId: String,
+    val deviceKey: String?,
+    val deviceNonce: String,
+    val deviceSignature: String,
+    val requestId: String,
+    val publicKeyId: String,
+    val exitNodeId: String,
+    val relaySelection: RuRelaySelection,
+    val relayRttSamples: List<RuRelayRttSample> = emptyList(),
+)
+
+data class RuRelayRttSample(val nodeId: String, val rttMs: Int)
+
+data class BackendRuWireGuardKey(
+    val id: String,
+    val publicKey: String,
+)
+
+data class BackendRuWireGuardIdentity(
+    val requestId: String,
+    val sessionId: String,
+    val generation: Int,
+    val publicKeyId: String,
+    val relaySelection: RuRelaySelection,
+    val relayNodeId: String,
+    val exitNodeId: String,
+    val leaseExpiresAtEpochMillis: Long,
+)
+
+data class BackendRuWireGuardConfig(
+    val endpoint: String,
+    val serverPublicKey: String,
+    val address: String,
+    val dns: List<String>,
+    val mtu: Int,
+    val allowedIps: List<String>,
+)
+
+sealed interface BackendRuWireGuardSession {
+    val identity: BackendRuWireGuardIdentity
+
+    data class Pending(override val identity: BackendRuWireGuardIdentity) : BackendRuWireGuardSession
+    data class Ready(
+        override val identity: BackendRuWireGuardIdentity,
+        val wireguard: BackendRuWireGuardConfig,
+    ) : BackendRuWireGuardSession
+}
+
 data class BackendMultiHopSession(
     val version: Int,
     val selection: MultiHopSettings,

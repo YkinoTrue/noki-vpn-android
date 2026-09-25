@@ -32,6 +32,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -42,6 +43,7 @@ import com.noki.vpn.MainViewModel
 import com.noki.vpn.data.AppLanguage
 import com.noki.vpn.data.DeviceSession
 import com.noki.vpn.data.PersonalizationSettings
+import com.noki.vpn.data.ServerSelectionMode
 import java.io.File
 import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
@@ -215,6 +217,29 @@ class AdaptiveScreenLayoutTest {
         val viewModel = layoutViewModel()
         checkSettingsWidth("Расширенные настройки", "advanced-wide") {
             AdvancedSettingsScreen(russianState(), viewModel, rememberLayerBackdrop(), liveGlassEnabled = false, showBackground = false)
+        }
+    }
+
+    @Test
+    fun ruRelayModeHidesProtocolAndManualRelayControls() {
+        val viewModel = layoutViewModel()
+        val normal = russianState()
+        render {
+            AdvancedSettingsScreen(normal, viewModel, rememberLayerBackdrop(),
+                liveGlassEnabled = false, showBackground = false)
+        }.use {
+            compose.onNodeWithText("Автовыбор протокола").assertExists()
+            compose.onNodeWithText("Автопуть").assertDoesNotExist()
+        }
+        val ru = normal.copy(advancedSettings = normal.advancedSettings.copy(ruRelayEnabled = true))
+        render {
+            AdvancedSettingsScreen(ru, viewModel, rememberLayerBackdrop(),
+                liveGlassEnabled = false, showBackground = false)
+        }.use {
+            compose.onNodeWithText("Автовыбор протокола").assertDoesNotExist()
+            compose.onNodeWithText("Автопуть").assertDoesNotExist()
+            compose.onNodeWithText("Выбрать сервер реле").assertDoesNotExist()
+            compose.onNodeWithText("WireGuard").assertExists()
         }
     }
 

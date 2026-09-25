@@ -64,6 +64,9 @@ internal class VpnConnectionPreparer(
         onCachedFallback: (Throwable) -> Unit = this.onCachedFallback,
     ): Outcome {
         var localSettings = store.load()
+        if (localSettings.advancedSettings.ruRelayEnabled) {
+            return Outcome.Failure(IllegalStateException("ru_wireguard_session_unavailable"))
+        }
         if (!strategy.forceRefreshSession && RuntimeProfilePolicy.isCachedProfileUsable(localSettings)) {
             return Outcome.Success(
                 PreparedVpnSession(

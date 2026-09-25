@@ -84,6 +84,7 @@ class AppVpnServiceCommandTest {
                     com.noki.vpn.data.VpnProtocol.AUTO -> setOf("tls", "reality")
                     com.noki.vpn.data.VpnProtocol.TLS -> setOf("tls")
                     com.noki.vpn.data.VpnProtocol.REALITY -> setOf("reality")
+                    com.noki.vpn.data.VpnProtocol.WIREGUARD -> emptySet()
                 }
                 assertEquals("$mode/$protocol", expected, outcomes.map { it.endpointCode }.toSet())
                 assertEquals(expected.size, calls.get())
@@ -624,6 +625,18 @@ class AppVpnServiceCommandTest {
         assertNull(fixture.orchestrator.currentSettings())
     }
 
+    @Test
+    fun ruSelectionChangedDuringXrayReadinessCannotBecomeConnected() = runBlocking {
+        val fixture = Fixture(this, probeFallback = true, workingEndpoint = "tcp1")
+        fixture.onProbe = { fixture.enableRuAfterPrepare() }
+
+        fixture.startPrepared()
+
+        assertEquals(listOf("tcp1"), fixture.startedEndpoints)
+        assertEquals(VpnConnectionState.FAILED, fixture.orchestrator.currentState())
+        assertEquals(true, fixture.savedSettings().advancedSettings.ruRelayEnabled)
+    }
+
     @Before
     fun provideInMemoryAndroidKeyStore() {
         Security.addProvider(object : Provider("NokiVpnCommandTest", 1.0, "Test-only Android keystore") {
@@ -890,6 +903,13 @@ class AppVpnServiceCommandTest {
         }
 
         fun savedSettings(): StoredSettings = store.load()
+
+        fun enableRuAfterPrepare() {
+            store.updateSettings { current -> current.copy(
+                advancedSettings = current.advancedSettings.copy(ruRelayEnabled = true),
+                ruRelaySelectionRevision = current.ruRelaySelectionRevision + 1L,
+            ) }
+        }
 
         suspend fun replaceConnected(): Boolean = suspendCoroutineUninterceptedOrReturn { continuation ->
             val settings = checkNotNull(orchestrator.currentSettings())

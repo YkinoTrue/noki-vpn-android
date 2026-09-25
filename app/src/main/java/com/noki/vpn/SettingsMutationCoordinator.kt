@@ -101,8 +101,14 @@ internal class SettingsMutationCoordinator(
             personalizationSettings = state.personalizationSettings,
             securitySettings = state.securitySettings,
             advancedSettings = state.advancedSettings,
+            ruRelaySelectionRevision = if (advancedSettings.ruRelaySelection != state.advancedSettings.ruRelaySelection) {
+                ruRelaySelectionRevision + 1L
+            } else {
+                ruRelaySelectionRevision
+            },
         ).let { updated ->
-            if (advancedSettings.multiHop == state.advancedSettings.multiHop) updated
+            if (advancedSettings.multiHop == state.advancedSettings.multiHop &&
+                advancedSettings.ruRelaySelection == state.advancedSettings.ruRelaySelection) updated
             else updated.copy(
                 profile = RuntimeProfilePolicy.profileAfterServerSelection(profile),
                 endpointOptions = emptyList(),

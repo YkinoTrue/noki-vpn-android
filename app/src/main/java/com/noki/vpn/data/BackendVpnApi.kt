@@ -36,6 +36,11 @@ interface VpnSessionApi {
         nodeId: String? = null,
         multiHop: MultiHopSettings? = null,
     ): BackendVpnSession
+
+    suspend fun createRuWireGuardSession(
+        token: String,
+        request: RuWireGuardSessionRequest,
+    ): BackendRuWireGuardSession
 }
 
 data class VpnSessionSelection(

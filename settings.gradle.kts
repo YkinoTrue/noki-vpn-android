@@ -18,3 +18,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Noki_Vpn"
 include(":app")
+include(":wireguard-native")

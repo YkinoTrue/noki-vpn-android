@@ -76,6 +76,8 @@ internal class StoredSettingsCodec(
         .put("loginAlertsEnabled", settings.securitySettings.loginAlertsEnabled)
         .put("protectNewDevices", settings.securitySettings.protectNewDevices)
         .put("protocol", settings.advancedSettings.protocol.name)
+        .put("ruRelayEnabled", settings.advancedSettings.ruRelayEnabled)
+        .put("ruRelaySelectionRevision", settings.ruRelaySelectionRevision)
         .put("endpointSelectionMode", settings.advancedSettings.endpointSelectionMode.name)
         .put("manualEndpointCode", settings.advancedSettings.manualEndpointCode)
         .put("manualEndpointGroupKey", settings.advancedSettings.manualEndpointGroupKey)
@@ -184,7 +186,8 @@ internal class StoredSettingsCodec(
         advancedSettings = AdvancedSettings(
             protocol = runCatching {
                 VpnProtocol.valueOf(json.optString("protocol", VpnProtocol.AUTO.name))
-            }.getOrElse { VpnProtocol.AUTO },
+            }.getOrElse { VpnProtocol.AUTO }.takeUnless { it == VpnProtocol.WIREGUARD } ?: VpnProtocol.AUTO,
+            ruRelayEnabled = json.optBoolean("ruRelayEnabled", false),
             endpointSelectionMode = runCatching {
                 EndpointSelectionMode.valueOf(
                     json.optString("endpointSelectionMode", EndpointSelectionMode.AUTO.name),
@@ -217,6 +220,7 @@ internal class StoredSettingsCodec(
         backendDeviceKey = json.optString("backendDeviceKey"),
         backendDeviceId = json.optString("backendDeviceId"),
         backendDeviceAccessRole = json.optString("backendDeviceAccessRole", "owner").ifBlank { "owner" },
+        ruRelaySelectionRevision = json.optLong("ruRelaySelectionRevision", 0L).coerceAtLeast(0L),
     )
 
     private fun encodeYoutubeCascade(profile: YoutubeCascadeProfile): JSONObject = JSONObject()

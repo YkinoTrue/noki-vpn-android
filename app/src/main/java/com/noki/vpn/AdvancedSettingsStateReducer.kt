@@ -5,10 +5,26 @@ import com.noki.vpn.data.DomainRulePolicy
 import com.noki.vpn.data.EndpointGroupPolicy
 import com.noki.vpn.data.EndpointSelectionMode
 import com.noki.vpn.data.RuntimeProfilePolicy
+import com.noki.vpn.data.ServerSelectionMode
 import com.noki.vpn.data.VpnEndpointOption
 import com.noki.vpn.data.VpnProtocol
 
 object AdvancedSettingsStateReducer {
+    fun setRuRelayEnabled(
+        current: AppUiState,
+        enabled: Boolean,
+        disableManualMultiHop: Boolean = false,
+    ): AppUiState {
+        val advanced = current.advancedSettings
+        if (enabled && advanced.multiHop.enabled && !disableManualMultiHop) return current
+        return current.copy(advancedSettings = advanced.copy(
+            ruRelayEnabled = enabled,
+            multiHop = if (enabled && advanced.multiHop.enabled) {
+                advanced.multiHop.copy(enabled = false)
+            } else advanced.multiHop,
+        ))
+    }
+
     fun setFilterMode(
         current: AppUiState,
         mode: AppFilterMode,
